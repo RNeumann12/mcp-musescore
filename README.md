@@ -1,35 +1,103 @@
-# MuseScore MCP Server
+# MuseScore MCP Server — Hot-Reload Fork
 
-A Model Context Protocol (MCP) server that provides programmatic control over MuseScore, via a WebSocket-based plugin system. This allows AI assistants like Claude to compose music, add lyrics, navigate scores, and control MuseScore directly.
+A Model Context Protocol (MCP) server that gives AI assistants like Claude programmatic
+control over **MuseScore 4** through a WebSocket plugin: compose music, add lyrics, navigate
+scores, and read the score back as compact LilyPond.
+
+> **This is a fork of [`ghchen99/mcp-musescore`](https://github.com/ghchen99/mcp-musescore)
+> by [@ghchen99](https://github.com/ghchen99).** All credit for the original concept and the
+> WebSocket-plugin approach goes to the original author (and to
+> [@CariacouP](https://github.com/CariacouP) for the lyric/title contributions upstream).
+> This fork reworks the plugin architecture, the score representation, and the tool surface —
+> see **[What this fork does differently](#what-this-fork-does-differently)** below.
 
 ![Demo GIF](./assets/mcp-muse.gif)
+
+---
+
+## What this fork does differently
+
+The original project established the core idea: a MuseScore plugin that exposes the scripting
+API over a WebSocket, driven by a Python MCP server. This fork keeps that foundation and
+focuses on three things — **iteration speed, token efficiency, and giving the model the
+musical context it needs to write well.**
+
+### 1. Hot-reloadable plugin architecture
+
+The plugin is split into two files:
+
+- **`musescore-mcp-websocket.qml`** — a thin, stable *shell*. It runs the WebSocket server
+  and, on every request, reads `mcp-logic.js` and `eval()`s it.
+- **`mcp-logic.js`** — *all* command logic.
+
+**Why:** MuseScore only reloads a `.qml` plugin via the Plugin Manager (effectively a restart).
+By moving the logic into a JS file the shell re-reads on every call, you edit `mcp-logic.js`
+and the change takes effect on the **next command — no restart, no clicks**. You load the
+`.qml` shell from the Plugin Manager exactly once. (Local-file `XMLHttpRequest` is disabled in
+MuseScore 4 / Qt6, so the shell uses `FileIO` to read the logic.)
+
+### 2. Compact LilyPond representation instead of raw JSON
+
+`get_score` returns the score as **compact LilyPond**, not a verbose JSON element dump.
+
+- **Whole-score by default**, one continuous line per staff/voice, `|` bar checks between
+  measures. Pass `start_measure`/`end_measure` to fetch only a slice of a large score.
+- **Multi-voice polyphony** is mapped correctly: concurrent voices become
+  `\voiceOne … \\ \voiceTwo …` arrays, sharded per staff.
+- **Temporal padding**: gaps/rests in a voice are filled with LilyPond spacer rests (`s4.`) so
+  every voice stays rhythmically aligned.
+- **Repeated whole-measure rests collapse** to multi-measure rests — 28 empty bars render as
+  `R1*28` instead of 28× `r1 |`.
+- **Absent voices** in a measure are padded with a single full-measure spacer rather than
+  noisy bare bar checks.
+
+**Why:** LilyPond is dramatically denser than JSON and is a notation the model already
+understands, so the same score costs far fewer tokens to read and reason about.
+
+### 3. Musical context the model can actually see
+
+`get_score` now surfaces **key signature, tempo, and per-measure time signatures**, rendered
+as `\key` / `\tempo` / `\time` directives (time signature only re-emitted when it changes),
+plus a one-line header (`Title | N measures | M staves | 3/4 | 120bpm`).
+
+**Why:** without the time signature the model can't tell whether a bar is 3/4 or 4/4 — which
+it must know to write correct rhythms. *(Clef is intentionally omitted: the plugin API has no
+reliable per-staff clef accessor, and a guessed clef is worse than none.)*
+
+### 4. Friendlier, more robust tooling
+
+- **Note names**: `add_note` accepts `"C4"`, `"Eb5"`, `"F#3"` (and double accidentals like
+  `Fx`/`Abb`) in addition to raw MIDI integers.
+- **Self-healing connection**: if MuseScore restarts, the client detects the dead socket on the
+  next send and transparently reconnects — no need to restart the MCP server.
+- **Clear batch errors**: `processSequence` reports each failed step as
+  `{step, action, params, error}`, so you see exactly which input was bad.
+- **Honest about deletions**: MuseScore's plugin `undo()` is unreliable for deletions, so
+  `delete_selection` and a following `undo` return a warning pointing you to native Ctrl+Z.
+- **Slimmer surface**: dropped `set_instrument_sound` (it only opened a dialog) and
+  `connect_to_musescore` (every call auto-connects).
+
+### 5. Tested core
+
+The pure LilyPond converter has a [pytest suite](tests/test_lilypond_converter.py) covering
+note-name parsing, rest collapsing, voice spacers, and the key/time/tempo header — runnable
+without MuseScore. Dependencies are pinned.
+
+---
 
 ## Prerequisites
 
 - MuseScore 4.x
 - Python 3.8+
-- Claude Desktop or compatible MCP client
-
-## Architecture & Hot-Reload
-
-The plugin is split into two files so logic can be updated **without restarting MuseScore**:
-
-- **`musescore-mcp-websocket.qml`** — a thin, stable *shell*. It runs the WebSocket server
-  and, on every request, reads `mcp-logic.js` and `eval()`s it. You only ever load this
-  file from the Plugin Manager **once**.
-- **`mcp-logic.js`** — all the command logic. Edit this file and the change takes effect on
-  the very next command — no MuseScore restart, no Plugin Manager clicks. You can also force
-  a recompile with the `reload_plugin()` MCP tool.
-
-Both files must live **in the same folder** (the MuseScore Plugins directory).
+- Claude Desktop or a compatible MCP client
 
 ## Setup
 
-### 1. Install the MuseScore Plugin
+### 1. Install the MuseScore plugin
 
 **MuseScore 4 requires every plugin to live in its own subfolder** — a loose `.qml` in the
 Plugins root is *not* detected. Create a `musescore-mcp/` subfolder and put **both** files in
-it (keep them together; `mcp-logic.js` must sit next to the `.qml`):
+it (they must sit next to each other; the shell reads `mcp-logic.js` from its own directory):
 
 ```
 <Plugins>/musescore-mcp/musescore-mcp-websocket.qml
@@ -38,255 +106,180 @@ it (keep them together; `mcp-logic.js` must sit next to the `.qml`):
 
 Where `<Plugins>` is:
 
-**macOS**: `~/Documents/MuseScore4/Plugins/`
-**Windows**: `%USERPROFILE%\Documents\MuseScore4\Plugins\`
-**Linux**: `~/Documents/MuseScore4/Plugins/`
+- **Windows**: `%USERPROFILE%\Documents\MuseScore4\Plugins\`
+- **macOS**: `~/Documents/MuseScore4/Plugins/`
+- **Linux**: `~/Documents/MuseScore4/Plugins/`
 
-### 2. Enable the Plugin in MuseScore
+### 2. Enable the plugin in MuseScore
 
-1. Open MuseScore
-2. Go to **Plugins → Plugin Manager**
-3. Find "MuseScore API Server" and check the box to enable it
-4. Click **OK**
+1. Open MuseScore.
+2. Go to **Plugins → Plugin Manager**.
+3. Find **"MuseScore API Server"**, check the box to enable it, click **OK**.
 
-### 3. Setup Python Environment
+### 3. Set up the Python environment
 
 ```bash
-git clone <your-repo>
-cd mcp-agents-demo
+git clone https://github.com/RNeumann12/mcp-musescore.git
+cd mcp-musescore
 python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements.txt    # add -r requirements-dev.txt to run the tests
 ```
 
 ### 4. Configure Claude Desktop
 
-Add to your Claude Desktop configuration file:
+Add to your Claude Desktop config:
 
-**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 
 ```json
 {
   "mcpServers": {
     "musescore": {
       "command": "/path/to/your/project/.venv/bin/python",
-      "args": [
-        "/path/to/your/project/server.py"
-      ]
+      "args": ["/path/to/your/project/server.py"]
     }
   }
 }
 ```
 
-**Note**: Update the paths to match your actual project location.
+Update the paths to match your project location.
 
-## Running the System
+## Running the system
 
-### Order of Operations
+1. **Start MuseScore first**, with a score open.
+2. **Run the plugin**: **Plugins → MuseScore API Server**. You should see
+   `Starting MuseScore MCP API Server … on port 8765` in the console.
+3. **Start the Python MCP server** (or restart Claude Desktop).
 
-1. **Start MuseScore first** with a score open
-2. **Run the MuseScore plugin**: Go to **Plugins → MuseScore API Server**
-   - You should see console output: `"Starting MuseScore API Server on port 8765"`
-3. **Then start the Python MCP server** or restart Claude Desktop
+To see plugin console output, launch MuseScore from a terminal:
 
-[insert screenshot of different functionality, harmonisation, melodywriting, as zoomed in GIFs]
+- **Windows**: `cd "C:\Program Files\MuseScore 4\bin"` then `MuseScore4.exe`
+- **macOS**: `/Applications/MuseScore\ 4.app/Contents/MacOS/mscore`
+- **Linux**: `musescore4`
 
-### Development and Testing
+## Tools
 
-For development, use the MCP development tools:
+### Navigation & cursor
+- `get_cursor_info()` — current cursor/selection as LilyPond
+- `go_to_measure(measure)` — jump to a measure (1-based)
+- `go_to_beginning_of_score()` / `go_to_final_measure()`
+- `next_element()` / `prev_element()` — move element by element
+- `next_staff()` / `prev_staff()` — move between staves
+- `select_current_measure()` — select the whole current measure
+- `select_custom_range(start_tick, end_tick, start_staff, end_staff)` — precise cross-measure,
+  multi-staff slice
 
-```bash
-# Install MCP dev tools
-pip install mcp
+### Notes, rests & lyrics
+- `add_note(pitch, duration, advance_cursor_after_action)` — `pitch` is a MIDI int (`60`) **or**
+  a note name (`"C4"`, `"Eb5"`, `"F#3"`)
+- `add_rest(duration, advance_cursor_after_action)`
+- `add_tuplet(duration, ratio, advance_cursor_after_action)` — triplets etc.
+- `add_lyrics(lyrics_list, verse=0)` — one syllable per note from the cursor
 
-# Test your server
-mcp dev server.py
+### Measures
+- `insert_measure()` — insert at the current position
+- `append_measure(count=1)` — add measures at the end
+- `delete_selection(measure=None)` — *(plugin undo is unreliable for deletes; see below)*
 
-# Check connection status
-mcp dev server.py --inspect
-```
+### Staff, time & tempo
+- `add_instrument(instrument_id)`
+- `set_staff_mute(staff, mute)`
+- `set_time_signature(numerator, denominator)`
+- `set_tempo(bpm)` — quarter-note BPM marking at the cursor
 
-### Viewing Console Output
+### Score & connection
+- `get_score(start_measure=None, end_measure=None)` — read the score as compact LilyPond with a
+  context header (title, counts, time signature, tempo, and `\key`/`\time`/`\tempo` directives)
+- `ping_musescore()` — connectivity check (the client also auto-connects on every call)
+- `reload_plugin()` — force-recompile `mcp-logic.js`
+- `undo()` — undo the last action
+- `processSequence(sequence)` — run a batch of commands; failures come back per-step
 
-To see MuseScore plugin console output, run MuseScore from terminal:
+## Usage examples
 
-**macOS**:
-```bash
-/Applications/MuseScore\ 4.app/Contents/MacOS/mscore
-```
-
-**Windows**:
-```cmd
-cd "C:\Program Files\MuseScore 4\bin"
-MuseScore.exe
-```
-
-**Linux**:
-```bash
-musescore4
-```
-
-## Features
-
-This MCP server provides comprehensive MuseScore control. 
-
-**🌟 NEW in this fork:** Built-in automatic, flawless multi-voice Polyphony & Temporal layout mapping to LilyPond!
-
-### **Navigation & Cursor Control**
-- `get_cursor_info()` - Get current cursor position and selection info
-- `go_to_measure(measure)` - Navigate to specific measure
-- `go_to_beginning_of_score()` / `go_to_final_measure()` - Navigate to start/end
-- `next_element()` / `prev_element()` - Move cursor element by element
-- `next_staff()` / `prev_staff()` - Move between staves
-- `select_current_measure()` - Select entire current measure
-- `select_custom_range(start_tick, end_tick, start_staff, end_staff)` - Slicing tool to extract cross-measure, multi-staff phrasing
-
-### **Polyphony & LilyPond Integration**
-- **Temporal Rhythm Padding**: Voices with gaps or rests automatically receive LilyPond spacer sequences (`s4.`) to hold their mathematical place accurately.
-- **Concurrent Voice Rendering**: Full 4-voice (`\voiceOne`, `\voiceTwo`, etc.) arrays correctly structured and sharded per staff for advanced Agent processing.
-
-### **Note & Rest Creation**
-- `add_note(pitch, duration, advance_cursor_after_action)` - Add notes by MIDI pitch (e.g. `60`) **or** scientific note name (e.g. `"C4"`, `"Eb5"`, `"F#3"`)
-- `add_rest(duration, advance_cursor_after_action)` - Add rests
-- `add_tuplet(duration, ratio, advance_cursor_after_action)` - Add tuplets (triplets, etc.)
-
-### **Measure Management**
-- `insert_measure()` - Insert measure at current position
-- `append_measure(count)` - Add measures to end of score
-- `delete_selection(measure)` - Delete current selection or specific measure
-
-### **Lyrics & Text**
-- `add_lyrics(lyrics_list, verse=0)` - Add lyric syllables to consecutive notes from the cursor
-
-### **Score Information**
-- `get_score(start_measure=None, end_measure=None)` - Read the **whole** score as compact
-  LilyPond (with a one-line header showing title, measure/staff counts, time signature and
-  tempo, plus `\key`/`\time`/`\tempo` directives in the LilyPond itself). Pass a measure range
-  to fetch only a slice of a large score and save tokens.
-- `ping_musescore()` - Test connection to MuseScore (the client also auto-connects on every call)
-- `reload_plugin()` - Hot-reload `mcp-logic.js` without restarting MuseScore
-
-### **Utilities**
-- `undo()` - Undo last action *(note: unreliable for deleted measures — prefer MuseScore's
-  native Ctrl+Z there)*
-- `set_time_signature(numerator, denominator)` - Change time signature
-- `set_tempo(bpm)` - Add a quarter-note BPM tempo marking at the cursor
-- `processSequence(sequence)` - Execute multiple commands in batch
-
-## Sample Music
-
-Check out the `/examples` folder for sample MuseScore files demonstrating various musical styles:
-
-- **Asian Instrumental** - Traditional Asian-inspired instrumental piece
-- **String Quartet** - Classical string quartet arrangement
-
-Each example includes:
-- `.mscz` - MuseScore file (editable)
-- `.pdf` - Sheet music
-- `.mp3` - Audio preview
-
-## Usage Examples
-
-### Creating a Simple Melody
+### A simple melody with lyrics
 
 ```python
-# Set up the score
 await go_to_beginning_of_score()
 
-# Add notes — pass a MIDI pitch (60=C, 64=E, ...) or a note name ("C4", "E4", ...)
-await add_note("C4", {"numerator": 1, "denominator": 4}, True)  # Quarter note C
-await add_note("E4", {"numerator": 1, "denominator": 4}, True)  # Quarter note E
-await add_note(67,   {"numerator": 1, "denominator": 4}, True)  # Quarter note G
-await add_note("C5", {"numerator": 1, "denominator": 2}, True)  # Half note C
+# pitch as a MIDI int or a note name — both work
+await add_note("C4", {"numerator": 1, "denominator": 4}, True)  # quarter note C
+await add_note("E4", {"numerator": 1, "denominator": 4}, True)  # quarter note E
+await add_note(67,   {"numerator": 1, "denominator": 4}, True)  # quarter note G
+await add_note("C5", {"numerator": 1, "denominator": 2}, True)  # half note C
 
-# Add lyrics to the notes just written (one syllable per note from the cursor)
 await go_to_beginning_of_score()
 await add_lyrics(["Do", "Mi", "Sol", "Do"])
 ```
-### Batch Operations
+
+### Batch operations
 
 ```python
-# Add multiple lyrics at once
-await add_lyrics(["Twin-", "kle", "twin-", "kle", "lit-", "tle", "star"])
-
-# Use sequence processing for complex operations
 sequence = [
     {"action": "goToBeginningOfScore", "params": {}},
     {"action": "addNote", "params": {"pitch": 60, "duration": {"numerator": 1, "denominator": 4}, "advanceCursorAfterAction": True}},
     {"action": "addNote", "params": {"pitch": 64, "duration": {"numerator": 1, "denominator": 4}, "advanceCursorAfterAction": True}},
-    {"action": "addRest", "params": {"duration": {"numerator": 1, "denominator": 4}, "advanceCursorAfterAction": True}}
+    {"action": "addRest", "params": {"duration": {"numerator": 1, "denominator": 4}, "advanceCursorAfterAction": True}},
 ]
 await processSequence(sequence)
 ```
 
-## Star History
+## Development
 
-[![Star History Chart](https://api.star-history.com/image?repos=ghchen99/mcp-musescore&type=date&legend=top-left)](https://www.star-history.com/?repos=ghchen99%2Fmcp-musescore&type=date&legend=top-left)
+```bash
+pip install -r requirements-dev.txt
+pytest                 # runs the pure-Python converter tests (no MuseScore needed)
+```
+
+`verify_mcp.py` is an end-to-end smoke test that talks straight to the WebSocket on port 8765
+(bypassing the MCP server) — run it after restarting MuseScore to confirm the live plugin.
+
+## Reference
+
+**MIDI pitches** — Middle C = 60; C major scale = 60, 62, 64, 65, 67, 69, 71, 72;
+chromatic: C=60, C#=61, D=62, … B=71.
+
+**Durations** — `{"numerator": int, "denominator": int}`: whole `1/1`, half `1/2`,
+quarter `1/4`, eighth `1/8`, dotted quarter `3/8`.
 
 ## Troubleshooting
 
-### Connection Issues
-- **"Not connected to MuseScore"**: 
-  - Ensure MuseScore is running with a score open
-  - Run the MuseScore plugin (Plugins → MuseScore API Server)
-  - Check that port 8765 isn't blocked by firewall
+- **"Not connected to MuseScore"** — ensure MuseScore is running with a score open, the plugin
+  is started (Plugins → MuseScore API Server), and port 8765 isn't firewalled. The client
+  auto-reconnects if MuseScore was restarted.
+- **Plugin not appearing** — confirm both files are in their own subfolder under the Plugins
+  directory; restart MuseScore after placing them.
+- **No console output** — launch MuseScore from a terminal (see above).
+- **Deletions don't undo** — MuseScore's plugin `undo()` is unreliable for deleted
+  measures/notes; use native **Ctrl+Z** in MuseScore instead.
 
-### Plugin Issues
-- **Plugin not appearing**: Check the `.qml` file is in the correct plugins directory
-- **Plugin won't enable**: Restart MuseScore after placing the plugin file
-- **No console output**: Run MuseScore from terminal to see debug messages
-
-### Python Server Issues
-- **"No server object found"**: The server object must be named `mcp`, `server`, or `app` at module level
-- **WebSocket errors**: Make sure MuseScore plugin is running before starting Python server
-- **Connection timeout**: The MuseScore plugin must be actively running, not just enabled
-
-### API Limitations
-- **Deletions & undo**: MuseScore's plugin `undo()` is unreliable for deleted measures/notes —
-  `delete_selection()` and `undo()` return a warning; prefer MuseScore's native Ctrl+Z there
-- **Selection persistence**: Some operations may affect current selection
-
-## File Structure
+## File structure
 
 ```
-mcp-agents-demo/
-├── .venv/
-├── server.py                           # Python MCP server entry point
-├── musescore-mcp-websocket.qml         # MuseScore plugin: thin hot-reload shell
-├── mcp-logic.js                        # MuseScore plugin: all command logic (hot-reloadable)
-├── requirements.txt
-├── README.md
-└── src/                                # Source code modules
-    ├── __init__.py
-    ├── client/                         # WebSocket client functionality
-    │   ├── __init__.py
-    │   └── websocket_client.py
-    ├── tools/                          # MCP tool implementations
-    │   ├── __init__.py
-    │   ├── connection.py               # Connection management tools
-    │   ├── navigation.py               # Score navigation tools
-    │   ├── notes_measures.py           # Note and measure manipulation
-    │   ├── sequences.py                # Batch operation tools
-    │   ├── staff_instruments.py        # Staff and instrument tools
-    │   └── time_tempo.py               # Timing and tempo tools
-    └── types/                          # Type definitions
-        ├── __init__.py
-        └── action_types.py             # WebSocket action type definitions
+mcp-musescore/
+├── server.py                       # Python MCP server entry point
+├── musescore-mcp-websocket.qml     # MuseScore plugin: thin hot-reload shell
+├── mcp-logic.js                    # MuseScore plugin: all command logic (hot-reloadable)
+├── requirements.txt / requirements-dev.txt
+├── tests/                          # pytest suite for the LilyPond converter
+└── src/
+    ├── client/websocket_client.py  # WebSocket client (auto-reconnecting)
+    ├── tools/                      # MCP tool implementations
+    ├── types/                      # action type definitions
+    └── utils/lilypond_converter.py # MuseScore JSON → compact LilyPond
 ```
 
-## MIDI Pitch Reference
+## Credits
 
-Common MIDI pitch values for reference:
-- **Middle C**: 60
-- **C Major Scale**: 60, 62, 64, 65, 67, 69, 71, 72
-- **Chromatic**: C=60, C#=61, D=62, D#=63, E=64, F=65, F#=66, G=67, G#=68, A=69, A#=70, B=71
+- Original project: **[ghchen99/mcp-musescore](https://github.com/ghchen99/mcp-musescore)** by
+  [@ghchen99](https://github.com/ghchen99) — the WebSocket-plugin concept and MCP server this
+  fork is built on.
+- Upstream lyric/title contributions by [@CariacouP](https://github.com/CariacouP).
+- This fork: hot-reload architecture, compact/token-efficient LilyPond rendering, musical
+  context, note-name input, connection robustness, and the test suite.
 
-## Duration Reference
+## License
 
-Duration format: `{"numerator": int, "denominator": int}`
-- **Whole note**: `{"numerator": 1, "denominator": 1}`
-- **Half note**: `{"numerator": 1, "denominator": 2}`
-- **Quarter note**: `{"numerator": 1, "denominator": 4}`
-- **Eighth note**: `{"numerator": 1, "denominator": 8}`
-- **Dotted quarter**: `{"numerator": 3, "denominator": 8}`
+See [LICENSE](LICENSE). This fork retains the original project's license.
