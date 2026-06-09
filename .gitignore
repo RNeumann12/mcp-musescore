@@ -210,3 +210,6 @@ __marimo__/
 .DS_Store
 
 AGENTS.md
+
+# Local debug dumps
+score_output.txt

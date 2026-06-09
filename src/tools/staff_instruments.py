@@ -29,16 +29,3 @@ def setup_staff_instruments_tools(mcp, client: MuseScoreClient):
             "staff": staff,
             "mute": mute
         })
-
-    @mcp.tool()
-    async def set_instrument_sound(staff: int, instrument_id: str):
-        """Change the sound of an instrument on a staff.
-        
-        Args:
-            staff: Staff number (0-based)
-            instrument_id: ID of the new instrument sound
-        """
-        return await client.send_command("setInstrumentSound", {
-            "staff": staff,
-            "instrumentId": instrument_id
-        })

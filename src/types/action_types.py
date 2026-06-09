@@ -1,6 +1,7 @@
 """TypedDict definitions for MuseScore MCP action sequences."""
 
-from typing import Dict, Any, List, Literal, TypedDict
+from typing import Dict, Any, List, Literal
+from typing_extensions import TypedDict
 
 
 class getScoreAction(TypedDict):
@@ -69,16 +70,6 @@ class setStaffMuteAction(TypedDict):
     params: setStaffMuteParams
 
 
-class setInstrumentSoundParams(TypedDict):
-    staff: int
-    instrumentId: str
-
-
-class setInstrumentSoundAction(TypedDict):
-    action: Literal["setInstrumentSound"]
-    params: setInstrumentSoundParams
-
-
 class appendMeasureAction(TypedDict):
     action: Literal["appendMeasure"]
     params: Dict[str, Any]
@@ -143,6 +134,15 @@ class setTimeSignatureAction(TypedDict):
     params: setTimeSignatureParams
 
 
+class setTempoParams(TypedDict):
+    bpm: int
+
+
+class setTempoAction(TypedDict):
+    action: Literal["setTempo"]
+    params: setTempoParams
+
+
 class undoAction(TypedDict):
     action: Literal["undo"]
     params: Dict[str, Any]
@@ -160,10 +160,10 @@ class prevStaffAction(TypedDict):
 
 ActionSequence = List[
     getScoreAction | addNoteAction | addRestAction | addTupletAction | 
-    addLyricsAction | addInstrumentAction | setStaffMuteAction | 
-    setInstrumentSoundAction | appendMeasureAction | deleteSelectionAction | 
+    addLyricsAction | addInstrumentAction | setStaffMuteAction |
+    appendMeasureAction | deleteSelectionAction |
     getCursorInfoAction | goToMeasureAction | nextElementAction | 
     prevElementAction | selectCurrentMeasureAction | insertMeasureAction | 
-    goToFinalMeasureAction | goToBeginningOfScoreAction | setTimeSignatureAction | 
-    undoAction | nextStaffAction | prevStaffAction
+    goToFinalMeasureAction | goToBeginningOfScoreAction | setTimeSignatureAction |
+    setTempoAction | undoAction | nextStaffAction | prevStaffAction
 ]

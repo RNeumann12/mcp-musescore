@@ -11,7 +11,6 @@ __all__ = [
     "addLyricsAction",
     "addInstrumentAction",
     "setStaffMuteAction",
-    "setInstrumentSoundAction",
     "appendMeasureAction",
     "deleteSelectionAction",
     "getCursorInfoAction",

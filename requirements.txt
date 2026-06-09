@@ -1,2 +1,2 @@
-mcp[cli]
-websockets
+mcp[cli]==1.27.2
+websockets==16.0

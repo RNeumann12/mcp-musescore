@@ -1,23 +1,31 @@
 """Notes and measures tools for MuseScore MCP."""
 
-from typing import List, Optional
+from typing import List, Optional, Union
 from ..client import MuseScoreClient
+from ..utils.lilypond_converter import note_name_to_midi
 
 
 def setup_notes_measures_tools(mcp, client: MuseScoreClient):
     """Setup notes and measures tools."""
-    
+
     @mcp.tool()
-    async def add_note(pitch: int = 64, duration: dict = {"numerator": 1, "denominator": 4}, advance_cursor_after_action: bool = True):
+    async def add_note(pitch: Union[int, str] = 64, duration: dict = {"numerator": 1, "denominator": 4}, advance_cursor_after_action: bool = True):
         """Add a note at the current cursor position with the specified pitch and duration.
-        
+
         Args:
-            pitch: MIDI pitch value (0-127, where 60 is middle C)
+            pitch: Either a MIDI pitch value (0-127, where 60 is middle C) or a
+                scientific note name like "C4", "Eb5", "F#3" (C4 = middle C = 60).
             duration: Duration as {"numerator": int, "denominator": int} (e.g., {"numerator": 1, "denominator": 4} for quarter note)
             advance_cursor_after_action: Whether to move cursor to next position after adding note
         """
+        if isinstance(pitch, str):
+            try:
+                pitch = note_name_to_midi(pitch)
+            except ValueError as e:
+                return {"error": str(e)}
+
         return await client.send_command("addNote", {
-            "pitch": pitch, 
+            "pitch": pitch,
             "duration": duration,
             "advanceCursorAfterAction": advance_cursor_after_action
         })

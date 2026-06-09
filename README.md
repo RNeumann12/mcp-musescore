@@ -6,19 +6,41 @@ A Model Context Protocol (MCP) server that provides programmatic control over Mu
 
 ## Prerequisites
 
-- MuseScore 3.x or 4.x
+- MuseScore 4.x
 - Python 3.8+
 - Claude Desktop or compatible MCP client
+
+## Architecture & Hot-Reload
+
+The plugin is split into two files so logic can be updated **without restarting MuseScore**:
+
+- **`musescore-mcp-websocket.qml`** — a thin, stable *shell*. It runs the WebSocket server
+  and, on every request, reads `mcp-logic.js` and `eval()`s it. You only ever load this
+  file from the Plugin Manager **once**.
+- **`mcp-logic.js`** — all the command logic. Edit this file and the change takes effect on
+  the very next command — no MuseScore restart, no Plugin Manager clicks. You can also force
+  a recompile with the `reload_plugin()` MCP tool.
+
+Both files must live **in the same folder** (the MuseScore Plugins directory).
 
 ## Setup
 
 ### 1. Install the MuseScore Plugin
 
-First, save the QML plugin code to your MuseScore plugins directory:
+**MuseScore 4 requires every plugin to live in its own subfolder** — a loose `.qml` in the
+Plugins root is *not* detected. Create a `musescore-mcp/` subfolder and put **both** files in
+it (keep them together; `mcp-logic.js` must sit next to the `.qml`):
 
-**macOS**: `~/Documents/MuseScore4/Plugins/musescore-mcp-websocket.qml`
-**Windows**: `%USERPROFILE%\Documents\MuseScore4\Plugins\musescore-mcp-websocket.qml`
-**Linux**: `~/Documents/MuseScore4/Plugins/musescore-mcp-websocket.qml`
+```
+<Plugins>/musescore-mcp/musescore-mcp-websocket.qml
+<Plugins>/musescore-mcp/mcp-logic.js
+```
+
+Where `<Plugins>` is:
+
+**macOS**: `~/Documents/MuseScore4/Plugins/`
+**Windows**: `%USERPROFILE%\Documents\MuseScore4\Plugins\`
+**Linux**: `~/Documents/MuseScore4/Plugins/`
 
 ### 2. Enable the Plugin in MuseScore
 
@@ -34,7 +56,7 @@ git clone <your-repo>
 cd mcp-agents-demo
 python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install fastmcp websockets
+pip install -r requirements.txt
 ```
 
 ### 4. Configure Claude Desktop
@@ -125,7 +147,7 @@ This MCP server provides comprehensive MuseScore control.
 - **Concurrent Voice Rendering**: Full 4-voice (`\voiceOne`, `\voiceTwo`, etc.) arrays correctly structured and sharded per staff for advanced Agent processing.
 
 ### **Note & Rest Creation**
-- `add_note(pitch, duration, advance_cursor_after_action)` - Add notes with MIDI pitch
+- `add_note(pitch, duration, advance_cursor_after_action)` - Add notes by MIDI pitch (e.g. `60`) **or** scientific note name (e.g. `"C4"`, `"Eb5"`, `"F#3"`)
 - `add_rest(duration, advance_cursor_after_action)` - Add rests
 - `add_tuplet(duration, ratio, advance_cursor_after_action)` - Add tuplets (triplets, etc.)
 
@@ -135,18 +157,21 @@ This MCP server provides comprehensive MuseScore control.
 - `delete_selection(measure)` - Delete current selection or specific measure
 
 ### **Lyrics & Text**
-- `add_lyrics_to_current_note(text)` - Add lyrics to current note
-- `add_lyrics(lyrics_list)` - Batch add lyrics to multiple notes
-- `set_title(title)` - Set score title
+- `add_lyrics(lyrics_list, verse=0)` - Add lyric syllables to consecutive notes from the cursor
 
 ### **Score Information**
-- `get_score()` - Get complete score analysis and structure
-- `ping_musescore()` - Test connection to MuseScore
-- `connect_to_musescore()` - Establish WebSocket connection
+- `get_score(start_measure=None, end_measure=None)` - Read the **whole** score as compact
+  LilyPond (with a one-line header showing title, measure/staff counts, time signature and
+  tempo, plus `\key`/`\time`/`\tempo` directives in the LilyPond itself). Pass a measure range
+  to fetch only a slice of a large score and save tokens.
+- `ping_musescore()` - Test connection to MuseScore (the client also auto-connects on every call)
+- `reload_plugin()` - Hot-reload `mcp-logic.js` without restarting MuseScore
 
 ### **Utilities**
-- `undo()` - Undo last action
+- `undo()` - Undo last action *(note: unreliable for deleted measures — prefer MuseScore's
+  native Ctrl+Z there)*
 - `set_time_signature(numerator, denominator)` - Change time signature
+- `set_tempo(bpm)` - Add a quarter-note BPM tempo marking at the cursor
 - `processSequence(sequence)` - Execute multiple commands in batch
 
 ## Sample Music
@@ -167,24 +192,17 @@ Each example includes:
 
 ```python
 # Set up the score
-await set_title("My First Song")
 await go_to_beginning_of_score()
 
-# Add notes (MIDI pitch: 60=C, 62=D, 64=E, etc.)
-await add_note(60, {"numerator": 1, "denominator": 4}, True)  # Quarter note C
-await add_note(64, {"numerator": 1, "denominator": 4}, True)  # Quarter note E
-await add_note(67, {"numerator": 1, "denominator": 4}, True)  # Quarter note G
-await add_note(72, {"numerator": 1, "denominator": 2}, True)  # Half note C
+# Add notes — pass a MIDI pitch (60=C, 64=E, ...) or a note name ("C4", "E4", ...)
+await add_note("C4", {"numerator": 1, "denominator": 4}, True)  # Quarter note C
+await add_note("E4", {"numerator": 1, "denominator": 4}, True)  # Quarter note E
+await add_note(67,   {"numerator": 1, "denominator": 4}, True)  # Quarter note G
+await add_note("C5", {"numerator": 1, "denominator": 2}, True)  # Half note C
 
-# Add lyrics
+# Add lyrics to the notes just written (one syllable per note from the cursor)
 await go_to_beginning_of_score()
-await add_lyrics_to_current_note("Do")
-await next_element()
-await add_lyrics_to_current_note("Mi")
-await next_element()
-await add_lyrics_to_current_note("Sol")
-await next_element()
-await add_lyrics_to_current_note("Do")
+await add_lyrics(["Do", "Mi", "Sol", "Do"])
 ```
 ### Batch Operations
 
@@ -225,8 +243,8 @@ await processSequence(sequence)
 - **Connection timeout**: The MuseScore plugin must be actively running, not just enabled
 
 ### API Limitations
-- **Lyrics**: Only first verse supported in MuseScore 3.x plugin API
-- **Title setting**: Uses multiple fallback methods due to frame access limitations
+- **Deletions & undo**: MuseScore's plugin `undo()` is unreliable for deleted measures/notes —
+  `delete_selection()` and `undo()` return a warning; prefer MuseScore's native Ctrl+Z there
 - **Selection persistence**: Some operations may affect current selection
 
 ## File Structure
@@ -235,7 +253,8 @@ await processSequence(sequence)
 mcp-agents-demo/
 ├── .venv/
 ├── server.py                           # Python MCP server entry point
-├── musescore-mcp-websocket.qml         # MuseScore plugin
+├── musescore-mcp-websocket.qml         # MuseScore plugin: thin hot-reload shell
+├── mcp-logic.js                        # MuseScore plugin: all command logic (hot-reloadable)
 ├── requirements.txt
 ├── README.md
 └── src/                                # Source code modules
