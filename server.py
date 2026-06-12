@@ -1,5 +1,6 @@
 from mcp.server.fastmcp import FastMCP
 import sys
+sys.stdout.reconfigure(encoding='utf-8')
 import logging
 
 # Import modular components

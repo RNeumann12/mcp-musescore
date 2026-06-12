@@ -66,6 +66,20 @@
             // Core
             case "getScore":             return getScore(command.params);
             case "ping":                 return "pong";
+            case "removeNotesAtTick":    return executeWithUndo(function() {
+                var c = inputCursorAt(command.params.tick || 0, command.params.staff || 0);
+                var el = c.element;
+                if (!el || el.name !== "Chord") return { error: "No chord at tick" };
+                var toRemove = command.params.pitches.slice();
+                var removed = [];
+                var keys = Object.keys(el.notes);
+                for (var i = keys.length - 1; i >= 0; i--) {
+                    var note = el.notes[keys[i]];
+                    var idx = toRemove.indexOf(note.pitch);
+                    if (idx >= 0) { el.remove(note); removed.push(note.pitch); toRemove.splice(idx, 1); }
+                }
+                return { success: true, removed: removed };
+            });
             case "undo":                 return undo();
             case "goToBeginningOfScore": return goToBeginningOfScore();
             case "processSequence":      return processSequence(command.params);
@@ -98,6 +112,7 @@
             // Staff / instrument / time / tempo
             case "addInstrument":        return addInstrument(command.params);
             case "setStaffMute":         return setStaffMute(command.params);
+            case "setInstrumentSound":   return setInstrumentSound(command.params);
             case "setTimeSignature":     return setTimeSignature(command.params);
             case "setTempo":             return setTempo(command.params);
 
@@ -261,13 +276,15 @@
     // ========================================================================
 
     function undo() {
+        if (!curScore) return { error: "No score open" };
         var wasDelete = lastAction && DELETE_ACTIONS[lastAction];
-        return executeWithUndo(function() {
-            cmd("undo");
-            var result = { success: true, message: "Undo successful" };
-            if (wasDelete) result.warning = UNDO_DELETE_WARNING;
-            return result;
-        });
+        // Must NOT run inside startCmd/endCmd (that would open a fresh, empty
+        // undo transaction). Plain cmd("undo") is "not a registered action" in
+        // MS 4.7 — the legacy-name table lacks undo, so use the action URI.
+        cmd("action://notation/undo");
+        var result = { success: true, message: "Undo successful" };
+        if (wasDelete) result.warning = UNDO_DELETE_WARNING;
+        return result;
     }
 
     function goToBeginningOfScore() {
@@ -627,12 +644,24 @@
         if (!params.duration.numerator || !params.duration.denominator) {
             return { error: "Duration must be specified as { numerator: int, denominator: int }" };
         }
-
         return executeWithUndo(function() {
             syncStateToSelection();
             var cursor = inputCursorAt(selectionState.startTick, selectionState.startStaff || 0);
             cursor.setDuration(params.duration.numerator, params.duration.denominator);
-            cursor.addNote(params.pitch, false);
+            var pitchStr = params.pitch.toString();
+            var pitchArr = [];
+            if (pitchStr.indexOf(',') !== -1) {
+                var parts = pitchStr.split(',');
+                for (var j = 0; j < parts.length; j++) {
+                    pitchArr.push(parseInt(parts[j], 10));
+                }
+            } else {
+                pitchArr = [parseInt(pitchStr, 10)];
+            }
+            cursor.addNote(pitchArr[0], false);
+            for (var i = 1; i < pitchArr.length; i++) {
+                cursor.addNote(pitchArr[i], true);
+            }
             cursor.rewindToTick(selectionState.startTick);
             if (params.advanceCursorAfterAction) cursor.next();
 
@@ -823,6 +852,15 @@
                 return { success: true, message: "Staff " + (params.mute ? "muted" : "unmuted") };
             }
             return { error: "Staff not found" };
+        });
+    }
+
+    function setInstrumentSound(params) {
+        var validation = validateParams(params, ["staff", "instrumentId"]);
+        if (!validation.valid) return validation;
+        return executeWithUndo(function() {
+            cmd("instruments");
+            return { success: true, message: "Instrument dialog opened, manual selection required" };
         });
     }
 

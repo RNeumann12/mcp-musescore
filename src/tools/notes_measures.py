@@ -20,7 +20,10 @@ def setup_notes_measures_tools(mcp, client: MuseScoreClient):
         """
         if isinstance(pitch, str):
             try:
-                pitch = note_name_to_midi(pitch)
+                if "," in pitch:
+                    pitch = ",".join(str(note_name_to_midi(p.strip())) for p in pitch.split(","))
+                else:
+                    pitch = note_name_to_midi(pitch)
             except ValueError as e:
                 return {"error": str(e)}
 

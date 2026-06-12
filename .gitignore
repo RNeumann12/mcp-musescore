@@ -213,3 +213,6 @@ AGENTS.md
 
 # Local debug dumps
 score_output.txt
+
+# Claude Code local permission grants (machine-specific)
+.claude/settings.local.json
