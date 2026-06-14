@@ -73,11 +73,33 @@ async def main():
     results.append(check("setTempo", isinstance(r, dict) and r.get("success") is True, json.dumps(r)))
     await client.send_command("undo")
 
-    # 7. navigation + selection render
+    # 7. addSystemText (section marker) + read it back via getScore
+    await client.send_command("goToBeginningOfScore")
+    r = await client.send_command("addSystemText", {"text": "MCP-TEST", "measure": 1})
+    ok = isinstance(r, dict) and r.get("success") is True
+    if ok:
+        gs = await client.send_command("getScore", {"startMeasure": 1, "endMeasure": 1})
+        markers = (gs or {}).get("analysis", {}).get("measures", [{}])[0].get("markers", [])
+        ok = any(m.get("text") == "MCP-TEST" for m in markers)
+    results.append(check("addSystemText (written + read back in getScore)", ok, json.dumps(r)))
+    await client.send_command("undo")  # revert the test marker
+
+    # 8. addChordSymbol (Harmony) + read it back via getScore
+    await client.send_command("goToBeginningOfScore")
+    r = await client.send_command("addChordSymbol", {"text": "Cm7", "measure": 1})
+    ok = isinstance(r, dict) and r.get("success") is True
+    if ok:
+        gs = await client.send_command("getScore", {"startMeasure": 1, "endMeasure": 1})
+        markers = (gs or {}).get("analysis", {}).get("measures", [{}])[0].get("markers", [])
+        ok = any(m.get("type") == "Harmony" and m.get("text") == "Cm7" for m in markers)
+    results.append(check("addChordSymbol (written + read back in getScore)", ok, json.dumps(r)))
+    await client.send_command("undo")  # revert the test chord symbol
+
+    # 9. navigation + selection render
     await client.send_command("goToBeginningOfScore")
     r = await client.send_command("getCursorInfo")
     ok = isinstance(r, dict) and r.get("success") and "currentSelection" in r
-    results.append(check("getCursorInfo", ok, ""))
+    results.append(check("getCursorInfo", ok, ""))  # check 10
 
     await client.close()
     print(f"\n{sum(results)}/{len(results)} checks passed")

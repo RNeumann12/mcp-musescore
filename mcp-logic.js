@@ -103,6 +103,10 @@
             case "addRest":              return addRest(command.params);
             case "addTuplet":            return addTuplet(command.params);
             case "addLyrics":            return addLyrics(command.params);
+            case "addSystemText":        return addSystemText(command.params);
+            case "addStaffText":         return addStaffText(command.params);
+            case "addRehearsalMark":     return addRehearsalMark(command.params);
+            case "addChordSymbol":       return addChordSymbol(command.params);
 
             // Measures
             case "appendMeasure":        return appendMeasure(command.params);
@@ -795,6 +799,101 @@
         });
     }
 
+    // ------------------------------------------------------------------------
+    // TEXT MARKERS (section labels, rehearsal marks, staff cues)
+    //
+    // All three are "annotation" elements attached to a segment (the same way
+    // setTempo attaches a TEMPO_TEXT). They differ only by element type and
+    // intended use:
+    //   - SYSTEM_TEXT    one label above the system, shows on every part —
+    //                    the natural way to mark sections ("Verse", "Chorus").
+    //   - REHEARSAL_MARK the boxed A/B/C section markers.
+    //   - STAFF_TEXT     a cue attached to a single staff only.
+    //
+    // Position resolution (first match wins):
+    //   params.measure (1-based) -> params.tick -> current selection.
+    // `staff` defaults per element type (system text / rehearsal marks belong
+    // on the top staff) but can be overridden.
+    // ------------------------------------------------------------------------
+    function addTextMarker(params, elementType, label, defaultStaff) {
+        var validation = validateParams(params, ["text"]);
+        if (!validation.valid) return validation;
+
+        return executeWithUndo(function() {
+            var staff = (params.staff !== undefined) ? params.staff : defaultStaff;
+            var cursor;
+            if (params.measure !== undefined) {
+                // 1-based to match go_to_measure / get_score numbering.
+                cursor = createCursor({ measure: params.measure - 1, startStaff: staff || 0 });
+            } else if (params.tick !== undefined) {
+                cursor = createCursor({ startTick: params.tick, startStaff: staff || 0 });
+            } else {
+                syncStateToSelection();
+                cursor = createCursor({
+                    startTick: selectionState.startTick,
+                    startStaff: (staff !== undefined ? staff : selectionState.startStaff) || 0
+                });
+            }
+            if (!cursor.segment) return { error: "No valid position to attach " + label };
+
+            var el = newElement(elementType);
+            el.text = params.text;
+            cursor.add(el);
+
+            return {
+                success: true,
+                message: label + " added: \"" + params.text + "\"",
+                currentSelection: selectionState
+            };
+        });
+    }
+
+    function addSystemText(params)    { return addTextMarker(params, Element.SYSTEM_TEXT,    "System text",    0); }
+    function addStaffText(params)     { return addTextMarker(params, Element.STAFF_TEXT,     "Staff text",     undefined); }
+    function addRehearsalMark(params) { return addTextMarker(params, Element.REHEARSAL_MARK, "Rehearsal mark", 0); }
+
+    // Chord symbols are HARMONY annotations: the .text ("Cm7", "G/B", "F#dim")
+    // is parsed by MuseScore into a properly formatted chord symbol. Defaults to
+    // the top staff (where chord symbols conventionally sit); for precise beat
+    // placement pass `tick` rather than `measure`.
+    //
+    // HARMONY needs special handling and CANNOT go through addTextMarker:
+    // setting .text on an un-parented Harmony hard-CRASHES MuseScore 4. The
+    // element must be added to the score FIRST, then its text set in a separate
+    // command so the parse/layout commits cleanly.
+    function addChordSymbol(params) {
+        var validation = validateParams(params, ["text"]);
+        if (!validation.valid) return validation;
+        if (!curScore) return { error: "No score open" };
+        try {
+            var staff = (params.staff !== undefined) ? params.staff : 0;
+            var cursor;
+            if (params.measure !== undefined) {
+                cursor = createCursor({ measure: params.measure - 1, startStaff: staff || 0 });
+            } else if (params.tick !== undefined) {
+                cursor = createCursor({ startTick: params.tick, startStaff: staff || 0 });
+            } else {
+                syncStateToSelection();
+                cursor = createCursor({ startTick: selectionState.startTick, startStaff: staff || 0 });
+            }
+            if (!cursor.segment) return { error: "No valid position to attach chord symbol" };
+
+            var harmony = newElement(Element.HARMONY);
+            cursor.add(harmony);                 // add BEFORE setting text (else crash)
+            curScore.startCmd();
+            harmony.text = params.text;          // parse/layout commits on endCmd
+            curScore.endCmd();
+
+            return {
+                success: true,
+                message: "Chord symbol added: \"" + params.text + "\"",
+                currentSelection: selectionState
+            };
+        } catch (e) {
+            return { error: e.toString() };
+        }
+    }
+
     // ========================================================================
     // MEASURE OPERATIONS
     // ========================================================================
@@ -976,6 +1075,37 @@
                     }
                     currentSegment = currentSegment.next;
                 }
+            }
+
+            // Section markers / rehearsal marks / staff cues are segment
+            // annotations, not note-track elements, so they need their own
+            // pass. Collect them per measure so the model can see existing
+            // section structure (and verify markers it just wrote).
+            cursor.rewind(0);
+            var annSeg = cursor.segment;
+            while (annSeg) {
+                var anns = annSeg.annotations;
+                if (anns && anns.length) {
+                    var mi = measureBoundaries.filter(function(tick) {
+                        return tick <= annSeg.tick;
+                    }).length - 1;
+                    if (mi >= 0) {
+                        for (var ai = 0; ai < anns.length; ai++) {
+                            var ann = anns[ai];
+                            if (!ann) continue;
+                            if (ann.name === "SystemText" || ann.name === "StaffText" ||
+                                ann.name === "RehearsalMark" || ann.name === "Harmony") {
+                                if (!score.measures[mi].markers) score.measures[mi].markers = [];
+                                score.measures[mi].markers.push({
+                                    type: ann.name,
+                                    text: ann.text,
+                                    startTick: annSeg.tick
+                                });
+                            }
+                        }
+                    }
+                }
+                annSeg = annSeg.next;
             }
 
             // Optional measure-range slice (keeps numMeasures for context)

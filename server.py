@@ -11,6 +11,7 @@ from src.tools import (
     setup_notes_measures_tools,
     setup_staff_instruments_tools,
     setup_time_tempo_tools,
+    setup_text_tools,
     setup_sequence_tools
 )
 
@@ -32,6 +33,7 @@ setup_navigation_tools(mcp, client)
 setup_notes_measures_tools(mcp, client)
 setup_staff_instruments_tools(mcp, client)
 setup_time_tempo_tools(mcp, client)
+setup_text_tools(mcp, client)
 setup_sequence_tools(mcp, client)
 
 # Main entry point

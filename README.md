@@ -178,6 +178,18 @@ To see plugin console output, launch MuseScore from a terminal:
 - `add_tuplet(duration, ratio, advance_cursor_after_action)` — triplets etc.
 - `add_lyrics(lyrics_list, verse=0)` — one syllable per note from the cursor
 
+### Text & section markers
+Attach real text annotations instead of overloading lyrics. Each takes the text plus
+optional positioning — a 1-based `measure`, an absolute `tick`, or (default) the current
+cursor. Existing markers are surfaced in `get_score` as `% m9 [RehearsalMark]: B` comment lines.
+- `add_system_text(text, measure=None, tick=None, staff=None)` — a label above the system,
+  shown on every part; the right way to mark sections (`"Verse"`, `"Chorus"`)
+- `add_rehearsal_mark(text, measure=None, tick=None, staff=None)` — the boxed A/B/C markers
+- `add_staff_text(text, measure=None, tick=None, staff=None)` — a cue on a single staff
+  (`"pizz."`, `"solo"`)
+- `add_chord_symbol(text, measure=None, tick=None, staff=None)` — a chord symbol MuseScore
+  formats specially (`"Cm7"`, `"G/B"`, `"F#dim"`); pass `tick` for beat-precise placement
+
 ### Measures
 - `insert_measure()` — insert at the current position
 - `append_measure(count=1)` — add measures at the end

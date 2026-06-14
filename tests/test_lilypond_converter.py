@@ -198,3 +198,26 @@ def test_selection_shape_list_elements():
 
 def test_empty_input_does_not_crash():
     assert json_to_lilypond({}) == "<<\n>>"
+
+
+def test_section_markers_rendered_as_comments():
+    """System text / rehearsal marks attached to measures surface as comments."""
+    m1 = _measure(1, 0, {"staff0": [_chord(60, 1920, 0)]})
+    m1["markers"] = [{"type": "SystemText", "text": "Verse", "startTick": 0}]
+    m2 = _measure(2, 1920, {"staff0": [_chord(62, 1920, 1920)]})
+    m2["markers"] = [{"type": "RehearsalMark", "text": "A", "startTick": 1920}]
+    data = {"staves": [{"name": "staff0", "visible": True}], "measures": [m1, m2]}
+    out = json_to_lilypond(data)
+    assert "% m1 [SystemText]: Verse" in out
+    assert "% m2 [RehearsalMark]: A" in out
+    # Comments precede the music tree and don't disturb note rendering.
+    assert out.index("% m1") < out.index("<<")
+    assert "c'1" in out and "d'1" in out
+
+
+def test_blank_marker_text_skipped():
+    m = _measure(1, 0, {"staff0": [_chord(60, 1920, 0)]})
+    m["markers"] = [{"type": "SystemText", "text": "  "}]
+    data = {"staves": [{"name": "staff0", "visible": True}], "measures": [m]}
+    out = json_to_lilypond(data)
+    assert "%" not in out

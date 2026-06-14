@@ -342,6 +342,24 @@ def _collapse_rest_runs(chunks: List[List[str]], multi_measure: bool) -> List[st
     return tokens
 
 
+def _section_marker_comments(measures: List[Dict[str, Any]]) -> List[str]:
+    """Render section labels / rehearsal marks / staff cues (segment
+    annotations) as LilyPond comment lines, e.g. ``% m9 [RehearsalMark]: B``.
+    Comments keep them visible to the model without disturbing the music tree."""
+    lines: List[str] = []
+    for m in measures:
+        markers = m.get("markers")
+        if not markers:
+            continue
+        loc = f"m{m['measure']}" if m.get("measure") is not None else f"tick{m.get('startTick', 0)}"
+        for mk in markers:
+            text = (mk.get("text") or "").strip()
+            if not text:
+                continue
+            lines.append(f"% {loc} [{mk.get('type', 'Text')}]: {text}")
+    return lines
+
+
 def json_to_lilypond(score_data: Dict[str, Any]) -> str:
     """Convert any MuseScore plugin response (full score or selection) into a
     compact LilyPond tree. The whole score is rendered, one continuous line per
@@ -390,7 +408,8 @@ def json_to_lilypond(score_data: Dict[str, Any]) -> str:
                 chunks.append(chunk)
             return chunks
 
-        lily_parts = ["<<"]
+        lily_parts = list(_section_marker_comments(measures))
+        lily_parts.append("<<")
         for staff in staff_names:
             voices_present = set()
             for m in measures:

@@ -51,6 +51,33 @@ class addLyricsAction(TypedDict):
     params: addLyricsParams
 
 
+class addTextMarkerParams(TypedDict, total=False):
+    text: str          # required
+    measure: int       # 1-based; optional
+    tick: int          # optional alternative to measure
+    staff: int         # optional
+
+
+class addSystemTextAction(TypedDict):
+    action: Literal["addSystemText"]
+    params: addTextMarkerParams
+
+
+class addStaffTextAction(TypedDict):
+    action: Literal["addStaffText"]
+    params: addTextMarkerParams
+
+
+class addRehearsalMarkAction(TypedDict):
+    action: Literal["addRehearsalMark"]
+    params: addTextMarkerParams
+
+
+class addChordSymbolAction(TypedDict):
+    action: Literal["addChordSymbol"]
+    params: addTextMarkerParams
+
+
 class addInstrumentParams(TypedDict):
     instrumentId: str
 
@@ -160,7 +187,8 @@ class prevStaffAction(TypedDict):
 
 ActionSequence = List[
     getScoreAction | addNoteAction | addRestAction | addTupletAction | 
-    addLyricsAction | addInstrumentAction | setStaffMuteAction |
+    addLyricsAction | addSystemTextAction | addStaffTextAction |
+    addRehearsalMarkAction | addChordSymbolAction | addInstrumentAction | setStaffMuteAction |
     appendMeasureAction | deleteSelectionAction |
     getCursorInfoAction | goToMeasureAction | nextElementAction | 
     prevElementAction | selectCurrentMeasureAction | insertMeasureAction | 
