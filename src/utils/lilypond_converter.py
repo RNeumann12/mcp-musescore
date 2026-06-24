@@ -342,6 +342,27 @@ def _collapse_rest_runs(chunks: List[List[str]], multi_measure: bool) -> List[st
     return tokens
 
 
+def _staff_label(name: str, meta: Dict[str, Any]) -> str:
+    """One-line instrument label for a staff comment, e.g.
+    ``staff3: Rhythm Guitar (guitar.electric) [6-str, capo 6]``. Falls back to
+    just the staff name when no instrument metadata is present."""
+    instrument = (meta.get("instrument") or "").strip()
+    label = name
+    if instrument:
+        label += f": {instrument}"
+        iid = meta.get("instrumentId")
+        if iid:
+            label += f" ({iid})"
+    tags: List[str] = []
+    if meta.get("strings"):
+        tags.append(f"{meta['strings']}-str")
+    if meta.get("capo"):
+        tags.append(f"capo {meta['capo']}")
+    if tags:
+        label += f" [{', '.join(tags)}]"
+    return label
+
+
 def _section_marker_comments(measures: List[Dict[str, Any]]) -> List[str]:
     """Render section labels / rehearsal marks / staff cues (segment
     annotations) as LilyPond comment lines, e.g. ``% m9 [RehearsalMark]: B``.
@@ -370,6 +391,8 @@ def json_to_lilypond(score_data: Dict[str, Any]) -> str:
     model can see what it is writing against."""
     try:
         staff_names, measures = _normalize_to_measures(score_data)
+        staff_meta = {st.get("name"): st for st in score_data.get("staves", [])
+                      if isinstance(st, dict)}
         voice_commands = {0: "\\voiceOne", 1: "\\voiceTwo", 2: "\\voiceThree", 3: "\\voiceFour"}
         multi_measure = len(measures) > 1
         measure_lengths = _measure_length_map(measures)
@@ -417,6 +440,12 @@ def json_to_lilypond(score_data: Dict[str, Any]) -> str:
                     voices_present.add(e.get("voice", 0))
             if not voices_present:
                 continue
+
+            # Name the staff with its instrument so the caller never has to guess
+            # (or screenshot) which staff index is which part.
+            meta = staff_meta.get(staff)
+            if meta and meta.get("instrument"):
+                lily_parts.append(f"  % {_staff_label(staff, meta)}")
 
             sorted_voices = sorted(voices_present)
             if len(sorted_voices) == 1:

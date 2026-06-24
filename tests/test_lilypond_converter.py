@@ -221,3 +221,36 @@ def test_blank_marker_text_skipped():
     data = {"staves": [{"name": "staff0", "visible": True}], "measures": [m]}
     out = json_to_lilypond(data)
     assert "%" not in out
+
+
+# --------------------------------------------------------------------------- #
+# instrument metadata -> per-staff comment
+# --------------------------------------------------------------------------- #
+
+def test_staff_instrument_comment_rendered():
+    """A staff carrying instrument metadata is labelled with a comment line that
+    precedes its \\new Staff, including string count and capo when present."""
+    data = {
+        "staves": [{
+            "name": "staff0", "visible": True,
+            "instrument": "Rhythm Guitar", "instrumentId": "guitar.electric",
+            "strings": 6, "capo": 6,
+        }],
+        "measures": [_measure(1, 0, {"staff0": [_chord(60, 1920, 0)]})],
+    }
+    out = json_to_lilypond(data)
+    assert "% staff0: Rhythm Guitar (guitar.electric) [6-str, capo 6]" in out
+    # The label must sit just above its staff, not pollute the music.
+    assert out.index("% staff0:") < out.index("\\new Staff")
+    assert "c'1" in out
+
+
+def test_staff_without_instrument_has_no_comment():
+    """Backwards compatibility: staves lacking instrument metadata render exactly
+    as before (no stray comment)."""
+    data = {
+        "staves": [{"name": "staff0", "visible": True}],
+        "measures": [_measure(1, 0, {"staff0": [_chord(60, 1920, 0)]})],
+    }
+    out = json_to_lilypond(data)
+    assert "%" not in out

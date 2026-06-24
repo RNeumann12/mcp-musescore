@@ -65,6 +65,7 @@
         switch (command.action) {
             // Core
             case "getScore":             return getScore(command.params);
+            case "diagnose":             return diagnose(command.params);
             case "ping":                 return "pong";
             case "removeNotesAtTick":    return executeWithUndo(function() {
                 var c = inputCursorAt(command.params.tick || 0, command.params.staff || 0);
@@ -1029,13 +1030,7 @@
             } catch (eTempo) {}
 
             for (var i = 0; i < curScore.nstaves; i++) {
-                var staff = (curScore.staves && curScore.staves[i]) ||
-                            (typeof curScore.staff === "function" ? curScore.staff(i) : null);
-                score.staves.push({
-                    name: "staff" + i,
-                    shortName: staff ? staff.shortName : "",
-                    visible: staff ? !staff.invisible : true
-                });
+                score.staves.push(describeStaff(staffAt(i), i));
             }
 
             var cursor = createCursor({ startTick: 0 });
@@ -1118,6 +1113,296 @@
 
             selectionState = tempState;
             return score;
+        });
+    }
+
+    // ========================================================================
+    // INSTRUMENT / STAFF INTROSPECTION
+    //
+    // The LilyPond dump is anonymous ("staff0".."staffN"), which forces the
+    // caller to guess (or screenshot) which staff is which instrument. These
+    // helpers attach the real part name and, for fretted/tab staves, the string
+    // count and capo. Every property access is defensive: the plugin API surface
+    // for Part / Instrument / StringData varies across MS4 point releases, and a
+    // missing field must never break getScore.
+    // ========================================================================
+
+    function staffAt(idx) {
+        return (curScore.staves && curScore.staves[idx]) ||
+               (typeof curScore.staff === "function" ? curScore.staff(idx) : null);
+    }
+
+    function staffPart(staff) {
+        if (!staff) return null;
+        try { return staff.part || null; } catch (e) { return null; }
+    }
+
+    // The active Instrument for a part. MS4 exposes it via instrumentAtTick();
+    // `part.instrument` is undefined in current builds, so try both.
+    function resolveInstrument(part) {
+        if (!part) return null;
+        try { if (part.instrument) return part.instrument; } catch (e) {}
+        try { if (part.instrumentAtTick) return part.instrumentAtTick(0); } catch (e2) {}
+        return null;
+    }
+
+    // Whether an instrument is genuinely fretted (so its notes map to a real
+    // fretboard and MuseScore can draw them red). Every MS4 instrument carries a
+    // *default* StringData, so stringData presence alone is not a reliable signal
+    // — drumsets and pitched non-fretted instruments have one too. Gate on the
+    // instrument family instead, excluding drumsets explicitly.
+    var FRETTED_FAMILIES = [
+        "guitar", "bass", "ukulele", "banjo", "mandolin", "lute", "cavaquinho",
+        "bouzouki", "balalaika", "charango", "sitar", "oud", "vihuela"
+    ];
+    function instrumentIsFretted(instr) {
+        if (!instr) return false;
+        try { if (instr.useDrumset) return false; } catch (e) {}
+        var id = "";
+        try { id = (instr.instrumentId || "").toLowerCase(); } catch (e2) {}
+        for (var i = 0; i < FRETTED_FAMILIES.length; i++) {
+            if (id.indexOf(FRETTED_FAMILIES[i]) !== -1) return true;
+        }
+        return false;
+    }
+
+    // {strings, frets} for a fretted instrument, else null. Bowed strings report
+    // frets === 0, which callers treat as "not fretted".
+    function stringInfo(instr) {
+        if (!instr) return null;
+        try {
+            var sd = instr.stringData;
+            if (sd && sd.strings && sd.strings.length) {
+                var frets = 0;
+                try { if (typeof sd.frets === "number") frets = sd.frets; } catch (e) {}
+                return { strings: sd.strings.length, frets: frets };
+            }
+        } catch (e2) {}
+        return null;
+    }
+
+    // Capo changes on a staff as [{tick, fret}] sorted by tick. The capo lives in
+    // a "Capo" annotation (its fretPosition); filtered to this staff by track so a
+    // capo on one guitar isn't attributed to another.
+    function capoEvents(staffIdx) {
+        var events = [];
+        try {
+            var c = curScore.newCursor();
+            c.staffIdx = staffIdx; c.voice = 0; c.rewind(0);
+            var seg = c.segment;
+            while (seg) {
+                var anns = seg.annotations;
+                if (anns && anns.length) {
+                    for (var i = 0; i < anns.length; i++) {
+                        var an = anns[i];
+                        if (!an || !an.name) continue;
+                        if (an.name.toLowerCase().indexOf("capo") === -1) continue;
+                        var tr = 0; try { tr = an.track || 0; } catch (eT) {}
+                        if ((tr >> 2) !== staffIdx) continue;   // belongs to another staff
+                        var fret = 0; try { fret = an.fretPosition || 0; } catch (eF) {}
+                        events.push({ tick: seg.tick, fret: fret });
+                    }
+                }
+                seg = seg.next;
+            }
+        } catch (e) {}
+        events.sort(function (a, b) { return a.tick - b.tick; });
+        return events;
+    }
+
+    function activeCapo(events, tick) {
+        var fret = 0;
+        for (var i = 0; i < events.length; i++) {
+            if (events[i].tick <= tick) fret = events[i].fret; else break;
+        }
+        return fret;
+    }
+
+    // Human-facing staff descriptor used by getScore (name/visible kept for
+    // backwards compatibility; instrument/strings/capo are the new fields).
+    function describeStaff(staff, idx) {
+        var info = {
+            name: "staff" + idx,
+            shortName: "",
+            visible: staff ? !staff.invisible : true
+        };
+        try { info.shortName = staff ? (staff.shortName || "") : ""; } catch (eSn) {}
+
+        var part = staffPart(staff);
+        if (part) {
+            try { info.instrument = part.longName || part.partName || part.shortName || ""; } catch (eLn) {}
+            try { if (part.instrumentId) info.instrumentId = part.instrumentId; } catch (eId) {}
+        }
+        var instr = resolveInstrument(part);
+        if (instrumentIsFretted(instr)) {
+            var si = stringInfo(instr);
+            if (si && si.strings) info.strings = si.strings;
+            var caps = capoEvents(idx);
+            if (caps.length && caps[0].fret) info.capo = caps[0].fret;
+        }
+        return info;
+    }
+
+    // ========================================================================
+    // DIAGNOSTICS
+    //
+    // Surfaces problems invisible in the LilyPond text because they are about
+    // *rendering*, not note content:
+    //   * out_of_range  - on a fretted staff, a note whose assigned fret can't be
+    //                     played: below the capo, above the top fret, or with no
+    //                     valid string. This is the condition MuseScore draws red.
+    //   * overfull/underfull_measure - a voice whose written rhythm doesn't sum to
+    //                     the bar length.
+    // MS4 does not expose an instrument pitch range, so range detection works off
+    // note.fret/note.string and therefore only runs on fretted instruments.
+    // Optional startMeasure/endMeasure (1-based, inclusive) limit the scan.
+    // ========================================================================
+
+    function diagnose(params) {
+        if (!curScore) return { error: "No score open" };
+        return executeWithUndo(function() {
+            var lo = (params && params.startMeasure) ? params.startMeasure - 1 : 0;
+            var hi = (params && params.endMeasure) ? params.endMeasure : curScore.nmeasures;
+
+            // Per-staff context: name + (for fretted staves) fret count and capo.
+            var staffCtx = [];
+            for (var i = 0; i < curScore.nstaves; i++) {
+                var staff = staffAt(i);
+                var part = staffPart(staff);
+                var instr = resolveInstrument(part);
+                var fretted = instrumentIsFretted(instr);
+                var si = fretted ? stringInfo(instr) : null;
+                staffCtx.push({
+                    name: part ? (part.longName || part.partName || ("staff" + i)) : ("staff" + i),
+                    fretted: fretted,
+                    frets: si ? si.frets : 0,
+                    capos: fretted ? capoEvents(i) : []
+                });
+            }
+
+            // Measure boundaries -> per-measure length (next start - this start).
+            var boundaries = [];
+            var bcur = createCursor({ startTick: 0 });
+            for (var m = 0; m < curScore.nmeasures; m++) {
+                boundaries.push(bcur.tick);
+                bcur.nextMeasure();
+            }
+            function measureLen(idx) {
+                if (idx + 1 < boundaries.length) return boundaries[idx + 1] - boundaries[idx];
+                if (idx > 0) return boundaries[idx] - boundaries[idx - 1];
+                return 1920;
+            }
+            function measureOf(tick) {
+                var mi = 0;
+                for (var b = 0; b < boundaries.length; b++) {
+                    if (boundaries[b] <= tick) mi = b; else break;
+                }
+                return mi;
+            }
+
+            var rangeCounts = {};   // "staff|measure" -> { belowCapo, aboveFrets, unfrettable, capo }
+            var voiceSpan = {};     // "staff|measure|voice" -> ticks written
+
+            var cur = createCursor({ startTick: 0 });
+            for (var k = 0; k < curScore.nstaves; k++) {
+                cur.rewind(0);
+                var seg = cur.segment;
+                var ctx = staffCtx[k];
+                while (seg) {
+                    var mi2 = measureOf(seg.tick);
+                    if (mi2 < lo || mi2 >= hi) { seg = seg.next; continue; }
+                    var capo = ctx.fretted ? activeCapo(ctx.capos, seg.tick) : 0;
+                    for (var v = 0; v < 4; v++) {
+                        var el = seg.elementAt(k * 4 + v);
+                        if (!el) continue;
+                        var dur = el.actualDuration ? el.actualDuration.ticks : 0;
+                        var vk = k + "|" + mi2 + "|" + v;
+                        voiceSpan[vk] = (voiceSpan[vk] || 0) + dur;
+                        if (ctx.fretted && el.name === "Chord" && el.notes) {
+                            var nkeys = Object.keys(el.notes);
+                            for (var n = 0; n < nkeys.length; n++) {
+                                var note = el.notes[nkeys[n]];
+                                var fr, str;
+                                try { fr = note.fret; } catch (eFr) { fr = undefined; }
+                                try { str = note.string; } catch (eStr) { str = undefined; }
+                                var reason = null;
+                                if (fr === undefined || fr < 0 || (str !== undefined && str < 0)) {
+                                    reason = "unfrettable";
+                                } else if (capo && fr < capo) {
+                                    reason = "belowCapo";
+                                } else if (ctx.frets && fr > ctx.frets) {
+                                    reason = "aboveFrets";
+                                }
+                                if (reason) {
+                                    var rk = k + "|" + mi2;
+                                    if (!rangeCounts[rk]) {
+                                        rangeCounts[rk] = { belowCapo: 0, aboveFrets: 0, unfrettable: 0, capo: capo };
+                                    }
+                                    rangeCounts[rk][reason]++;
+                                }
+                            }
+                        }
+                    }
+                    seg = seg.next;
+                }
+            }
+
+            var issues = [];
+            for (var rkey in rangeCounts) {
+                if (!rangeCounts.hasOwnProperty(rkey)) continue;
+                var rp = rkey.split("|");
+                var rsi = parseInt(rp[0], 10), rmi = parseInt(rp[1], 10);
+                var rc = rangeCounts[rkey];
+                var bits = [];
+                if (rc.belowCapo)   bits.push(rc.belowCapo + " below capo " + rc.capo);
+                if (rc.aboveFrets)  bits.push(rc.aboveFrets + " above top fret");
+                if (rc.unfrettable) bits.push(rc.unfrettable + " unfrettable");
+                issues.push({
+                    type: "out_of_range",
+                    staff: rsi,
+                    instrument: staffCtx[rsi].name,
+                    measure: rmi + 1,
+                    detail: bits.join(", ") + " (not playable as written)"
+                });
+            }
+            for (var vkey in voiceSpan) {
+                if (!voiceSpan.hasOwnProperty(vkey)) continue;
+                var vp = vkey.split("|");
+                var vsi = parseInt(vp[0], 10), vmi = parseInt(vp[1], 10), vvo = parseInt(vp[2], 10);
+                var span = voiceSpan[vkey];
+                var len = measureLen(vmi);
+                if (span !== len) {
+                    issues.push({
+                        type: span > len ? "overfull_measure" : "underfull_measure",
+                        staff: vsi,
+                        instrument: staffCtx[vsi].name,
+                        measure: vmi + 1,
+                        voice: vvo,
+                        detail: "voice fills " + span + "/" + len + " ticks"
+                    });
+                }
+            }
+            issues.sort(function (a, b) {
+                return (a.measure - b.measure) || (a.staff - b.staff);
+            });
+
+            // Lean per-staff context for the caller (drop the bulky capo arrays).
+            var ctxOut = [];
+            for (var c2 = 0; c2 < staffCtx.length; c2++) {
+                ctxOut.push({
+                    staff: c2,
+                    name: staffCtx[c2].name,
+                    fretted: staffCtx[c2].fretted,
+                    capo: staffCtx[c2].capos.length ? staffCtx[c2].capos[0].fret : 0
+                });
+            }
+
+            return {
+                success: true,
+                issues: issues,
+                staffContext: ctxOut,
+                measuresChecked: hi - lo
+            };
         });
     }
 
