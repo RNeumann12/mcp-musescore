@@ -11,6 +11,16 @@ _PURE_REST_RE = re.compile(r"^r(\d+\.?)$")
 # Note name -> semitone offset within an octave (C = 0).
 _NOTE_BASE = {"c": 0, "d": 2, "e": 4, "f": 5, "g": 7, "a": 9, "b": 11}
 
+# MuseScore Tonal Pitch Class -> LilyPond letter+accidental (circle of fifths,
+# 14 = C, 15 = G). Drives enharmonic spelling (flats vs sharps).
+_TPC_NAMES = {
+    6: 'fes', 7: 'ces', 8: 'ges', 9: 'des', 10: 'as', 11: 'es', 12: 'bes', 13: 'f',
+    14: 'c', 15: 'g', 16: 'd', 17: 'a', 18: 'e', 19: 'b', 20: 'fis',
+    21: 'cis', 22: 'gis', 23: 'dis', 24: 'ais', 25: 'eis', 26: 'bis',
+    27: 'fisis', 28: 'cisis', 29: 'gisis', 30: 'disis', 31: 'aisis', 32: 'eisis', 33: 'bisis',
+    -1: 'feses', 0: 'ceses', 1: 'geses', 2: 'deses', 3: 'ases', 4: 'eses', 5: 'beses',
+}
+
 
 def note_name_to_midi(name: str) -> int:
     """Convert a scientific-pitch note name like "C4", "Eb5", "F#3", "Gbb2"
@@ -68,41 +78,25 @@ def midi_to_lilypond_pitch(midi_pitch: int, tpc: Optional[int] = None) -> str:
         # Fallback names if no TPC provided
         pitch_names = ['c', 'cis', 'd', 'dis', 'e', 'f', 'fis', 'g', 'gis', 'a', 'ais', 'b']
         
-        if tpc is not None:
-            # MuseScore TPC map (circle of fifths where 14 = C, 15 = G)
-            tpc_map = {
-                6: 'fes', 7: 'ces', 8: 'ges', 9: 'des', 10: 'as', 11: 'es', 12: 'bes', 13: 'f',
-                14: 'c', 15: 'g', 16: 'd', 17: 'a', 18: 'e', 19: 'b', 20: 'fis',
-                21: 'cis', 22: 'gis', 23: 'dis', 24: 'ais', 25: 'eis', 26: 'bis',
-                27: 'fisis', 28: 'cisis', 29: 'gisis', 30: 'disis', 31: 'aisis', 32: 'eisis', 33: 'bisis',
-                -1: 'feses', 0: 'ceses', 1: 'geses', 2: 'deses', 3: 'ases', 4: 'eses', 5: 'beses'
-            }
-            base_note = tpc_map.get(tpc, pitch_names[midi_pitch % 12])
+        if tpc is not None and tpc in _TPC_NAMES:
+            base_note = _TPC_NAMES[tpc]
+            # Derive the octave from the *spelled* letter, not the raw MIDI
+            # number. Enharmonics can cross an octave boundary (e.g. Cb4 sounds
+            # as B3 / MIDI 59, B#3 sounds as C4 / MIDI 60); using the alteration
+            # to recover the natural letter's pitch keeps the octave correct.
+            alter = (tpc + 1) // 7 - 2  # semitone offset of this spelling (-2..+2)
+            octave = ((midi_pitch - alter) // 12) - 1
         else:
             base_note = pitch_names[midi_pitch % 12]
-            
-        octave = (midi_pitch // 12) - 1
-        
-        # Mapping MIDI octaves to LilyPond octaves (C4 = MIDI 60 = c')
-        if octave == 4:
-            octave_mark = "'"
-        elif octave == 5:
-            octave_mark = "''"
-        elif octave == 6:
-            octave_mark = "'''"
-        elif octave == 7:
-            octave_mark = "''''"
-        elif octave == 3:
-            octave_mark = ""
-        elif octave == 2:
-            octave_mark = ","
-        elif octave == 1:
-            octave_mark = ",,"
-        elif octave == 0:
-            octave_mark = ",,,"
+            octave = (midi_pitch // 12) - 1
+
+        # LilyPond octave marks are relative to octave 3 (C3 = bare letter,
+        # C4 = c'). Each octave above adds "'", each below adds ",".
+        if octave >= 3:
+            octave_mark = "'" * (octave - 3)
         else:
-            octave_mark = ""  # Fallback for out-of-bounds
-            
+            octave_mark = "," * (3 - octave)
+
         return f"{base_note}{octave_mark}"
     except Exception as e:
         logger.error(f"Error converting MIDI pitch {midi_pitch}: {e}")

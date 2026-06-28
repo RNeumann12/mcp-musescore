@@ -61,6 +61,23 @@ def test_midi_to_lilypond_pitch_uses_tpc_for_spelling():
     assert midi_to_lilypond_pitch(61, 9) == "des'"
 
 
+def test_midi_to_lilypond_pitch_enharmonic_octave_boundary():
+    # Spellings that cross an octave boundary must take their octave from the
+    # spelled letter, not the raw MIDI number.
+    # Cb4 sounds as B3 (MIDI 59) but belongs to octave 4 -> ces'
+    assert midi_to_lilypond_pitch(59, 7) == "ces'"
+    # B#3 sounds as C4 (MIDI 60) but belongs to octave 3 -> bis (no mark)
+    assert midi_to_lilypond_pitch(60, 26) == "bis"
+    # Sanity: ordinary spellings are unaffected
+    assert midi_to_lilypond_pitch(75, 11) == "es''"   # Eb5
+
+
+def test_midi_to_lilypond_pitch_extreme_octaves():
+    # Generalised octave marks must hold beyond the old hard-coded 0..7 range.
+    assert midi_to_lilypond_pitch(127) == "g''''''"   # G9
+    assert midi_to_lilypond_pitch(0) == "c,,,,"        # C-1
+
+
 def test_ticks_to_duration():
     assert ticks_to_lilypond_duration(1920) == "1"
     assert ticks_to_lilypond_duration(480) == "4"
