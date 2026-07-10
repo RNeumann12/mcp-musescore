@@ -9,6 +9,7 @@ __all__ = [
     "addRestAction",
     "addTupletAction",
     "addLyricsAction",
+    "addSlideAction",
     "addInstrumentAction",
     "setStaffMuteAction",
     "appendMeasureAction",

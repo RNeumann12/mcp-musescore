@@ -1,9 +1,10 @@
 const fs = require('fs');
-const code = fs.readFileSync('musescore-mcp-websocket.qml', 'utf8');
-// Mocking QML imports and components to just check basic JS syntax of the functions
+const code = fs.readFileSync('mcp-logic.js', 'utf8');
+
 try {
-    new Function(code);
-    console.log("No critical syntax errors found by basic JS parser.");
+    new Function(`return ${code};`);
+    console.log("mcp-logic.js syntax check passed.");
 } catch(e) {
     console.log("JS Syntax check:", e);
+    process.exitCode = 1;
 }

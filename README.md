@@ -68,8 +68,10 @@ reliable per-staff clef accessor, and a guessed clef is worse than none.)*
 
 - **Note names**: `add_note` accepts `"C4"`, `"Eb5"`, `"F#3"` (and double accidentals like
   `Fx`/`Abb`) in addition to raw MIDI integers.
-- **Self-healing connection**: if MuseScore restarts, the client detects the dead socket on the
-  next send and transparently reconnects — no need to restart the MCP server.
+- **Self-healing connection**: safe read-only calls transparently reconnect after a dead socket.
+  Edits are not blindly retried when delivery is uncertain, preventing duplicated notes/measures.
+- **Bounded failures**: configurable connection/command timeouts and response-size limits prevent
+  a wedged plugin or very large score read from hanging an agent indefinitely.
 - **Clear batch errors**: `processSequence` reports each failed step as
   `{step, action, params, error}`, so you see exactly which input was bad.
 - **Honest about deletions**: MuseScore's plugin `undo()` is unreliable for deletions, so
@@ -205,9 +207,35 @@ cursor. Existing markers are surfaced in `get_score` as `% m9 [RehearsalMark]: B
 - `get_score(start_measure=None, end_measure=None)` — read the score as compact LilyPond with a
   context header (title, counts, time signature, tempo, and `\key`/`\time`/`\tempo` directives)
 - `ping_musescore()` — connectivity check (the client also auto-connects on every call)
+- `get_mcp_status()` — bridge configuration plus live plugin reachability
 - `reload_plugin()` — force-recompile `mcp-logic.js`
 - `undo()` — undo the last action
-- `processSequence(sequence)` — run a batch of commands; failures come back per-step
+- `process_sequence(sequence)` — validated batch; failures come back per-step
+- `processSequence(sequence)` — backwards-compatible alias
+
+### Fretted instruments
+
+- `get_fingering(staff=0, start_measure=None, end_measure=None)` — read tuning and string/fret
+  assignments
+- `set_note_string(tick, staff, string, voice=0, pitch=None, fret=None)` — choose an absolute
+  string while preserving pitch
+- `move_note_string(tick, staff, moves, voice=0, pitch=None)` — move relatively across strings
+- `remove_notes_at_tick(tick, pitches, staff=0)` — remove selected pitches from a chord
+
+## Optional configuration
+
+Set these environment variables in the MCP server configuration when the defaults are unsuitable:
+
+| Variable | Default |
+| --- | ---: |
+| `MUSESCORE_MCP_HOST` | `localhost` |
+| `MUSESCORE_MCP_PORT` | `8765` |
+| `MUSESCORE_MCP_CONNECT_TIMEOUT` | `5` seconds |
+| `MUSESCORE_MCP_COMMAND_TIMEOUT` | `30` seconds |
+| `MUSESCORE_MCP_MAX_RESPONSE_BYTES` | `8388608` |
+
+If a timeout or `uncertain_delivery` error occurs during an edit, read the affected score range
+before retrying because MuseScore may have applied the command before the connection failed.
 
 ## Usage examples
 
@@ -239,6 +267,9 @@ await processSequence(sequence)
 ```
 
 ## Development
+
+See [IMPROVEMENTS.md](IMPROVEMENTS.md) for the prioritized agent-completeness roadmap and
+the reliability work already implemented.
 
 ```bash
 pip install -r requirements-dev.txt

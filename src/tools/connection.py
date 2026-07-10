@@ -3,22 +3,36 @@
 from typing import Optional
 
 from ..client import MuseScoreClient
+from .annotations import NON_DESTRUCTIVE, READ_ONLY
 
 
 def setup_connection_tools(mcp, client: MuseScoreClient):
     """Setup connection and utility tools."""
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def ping_musescore():
         """Ping the MuseScore WebSocket API to check connection."""
         return await client.send_command("ping")
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
+    async def get_mcp_status():
+        """Check bridge configuration and live MuseScore/plugin connectivity.
+
+        Use this first when a tool reports a connection or timeout error. The
+        result distinguishes local MCP configuration from the live plugin state.
+        """
+        status = client.status()
+        ping = await client.send_command("ping")
+        status["plugin_reachable"] = ping == "pong"
+        status["plugin_response"] = ping
+        return status
+
+    @mcp.tool(annotations=NON_DESTRUCTIVE)
     async def reload_plugin():
         """Hot-reload the MuseScore plugin logic (mcp-logic.js) without restarting MuseScore."""
         return await client.send_command("reloadLogic")
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def get_score(start_measure: Optional[int] = None, end_measure: Optional[int] = None):
         """Read the current score as compact LilyPond (the whole score by default).
 
@@ -53,7 +67,7 @@ def setup_connection_tools(mcp, client: MuseScoreClient):
             return f"{header}\n{lily_str}"
         return res
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def diagnose_score(start_measure: Optional[int] = None, end_measure: Optional[int] = None):
         """Check the score for problems that are invisible in the LilyPond text
         because they are about rendering, not note content:

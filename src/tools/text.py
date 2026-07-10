@@ -8,6 +8,7 @@ selection.
 
 from typing import Optional
 from ..client import MuseScoreClient
+from .annotations import NON_DESTRUCTIVE
 
 
 def setup_text_tools(mcp, client: MuseScoreClient):
@@ -23,7 +24,7 @@ def setup_text_tools(mcp, client: MuseScoreClient):
             params["staff"] = staff
         return params
 
-    @mcp.tool()
+    @mcp.tool(annotations=NON_DESTRUCTIVE)
     async def add_system_text(text: str, measure: Optional[int] = None,
                               tick: Optional[int] = None, staff: Optional[int] = None):
         """Add system text — a label shown once above the system and on every part.
@@ -39,7 +40,7 @@ def setup_text_tools(mcp, client: MuseScoreClient):
         """
         return await client.send_command("addSystemText", _params(text, measure, tick, staff))
 
-    @mcp.tool()
+    @mcp.tool(annotations=NON_DESTRUCTIVE)
     async def add_rehearsal_mark(text: str, measure: Optional[int] = None,
                                  tick: Optional[int] = None, staff: Optional[int] = None):
         """Add a rehearsal mark — the boxed section marker (e.g. "A", "B", "1").
@@ -52,7 +53,7 @@ def setup_text_tools(mcp, client: MuseScoreClient):
         """
         return await client.send_command("addRehearsalMark", _params(text, measure, tick, staff))
 
-    @mcp.tool()
+    @mcp.tool(annotations=NON_DESTRUCTIVE)
     async def add_staff_text(text: str, measure: Optional[int] = None,
                              tick: Optional[int] = None, staff: Optional[int] = None):
         """Add staff text — a cue attached to a single staff (e.g. "pizz.", "solo").
@@ -65,7 +66,7 @@ def setup_text_tools(mcp, client: MuseScoreClient):
         """
         return await client.send_command("addStaffText", _params(text, measure, tick, staff))
 
-    @mcp.tool()
+    @mcp.tool(annotations=NON_DESTRUCTIVE)
     async def add_chord_symbol(text: str, measure: Optional[int] = None,
                                tick: Optional[int] = None, staff: Optional[int] = None):
         """Add a chord symbol — a HARMONY annotation MuseScore renders specially

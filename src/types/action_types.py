@@ -1,6 +1,6 @@
 """TypedDict definitions for MuseScore MCP action sequences."""
 
-from typing import Dict, Any, List, Literal
+from typing import Dict, Any, List, Literal, Union
 from typing_extensions import TypedDict
 
 
@@ -10,7 +10,7 @@ class getScoreAction(TypedDict):
 
 
 class addNoteParams(TypedDict):
-    pitch: int
+    pitch: Union[int, str]
     duration: Dict[Literal["numerator", "denominator"], int]
     advanceCursorAfterAction: bool
 
@@ -78,6 +78,21 @@ class addChordSymbolAction(TypedDict):
     params: addTextMarkerParams
 
 
+class addSlideParams(TypedDict, total=False):
+    measure: int       # 1-based; optional
+    tick: int          # absolute tick of the start note (preferred)
+    staff: int         # optional, defaults to 0
+    voice: int         # optional, defaults to 0
+    pitch: int         # disambiguate a chord by MIDI pitch; optional
+    type: str          # "straight" (default) or "wavy"
+    text: str          # optional line label
+
+
+class addSlideAction(TypedDict):
+    action: Literal["addSlide"]
+    params: addSlideParams
+
+
 class addInstrumentParams(TypedDict):
     instrumentId: str
 
@@ -136,6 +151,18 @@ class selectCurrentMeasureAction(TypedDict):
     params: Dict[str, Any]
 
 
+class selectCustomRangeParams(TypedDict):
+    startTick: int
+    endTick: int
+    startStaff: int
+    endStaff: int
+
+
+class selectCustomRangeAction(TypedDict):
+    action: Literal["selectCustomRange"]
+    params: selectCustomRangeParams
+
+
 class insertMeasureAction(TypedDict):
     action: Literal["insertMeasure"]
     params: Dict[str, Any]
@@ -185,13 +212,18 @@ class prevStaffAction(TypedDict):
     params: Dict[str, Any]
 
 
+class diagnoseAction(TypedDict):
+    action: Literal["diagnose"]
+    params: Dict[str, Any]
+
+
 ActionSequence = List[
     getScoreAction | addNoteAction | addRestAction | addTupletAction | 
     addLyricsAction | addSystemTextAction | addStaffTextAction |
-    addRehearsalMarkAction | addChordSymbolAction | addInstrumentAction | setStaffMuteAction |
+    addRehearsalMarkAction | addChordSymbolAction | addSlideAction | addInstrumentAction | setStaffMuteAction |
     appendMeasureAction | deleteSelectionAction |
     getCursorInfoAction | goToMeasureAction | nextElementAction | 
-    prevElementAction | selectCurrentMeasureAction | insertMeasureAction | 
+    prevElementAction | selectCurrentMeasureAction | selectCustomRangeAction | insertMeasureAction |
     goToFinalMeasureAction | goToBeginningOfScoreAction | setTimeSignatureAction |
-    setTempoAction | undoAction | nextStaffAction | prevStaffAction
+    setTempoAction | undoAction | nextStaffAction | prevStaffAction | diagnoseAction
 ]

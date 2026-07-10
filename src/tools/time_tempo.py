@@ -1,12 +1,13 @@
 """Time signature and tempo tools for MuseScore MCP."""
 
 from ..client import MuseScoreClient
+from .annotations import NON_DESTRUCTIVE
 
 
 def setup_time_tempo_tools(mcp, client: MuseScoreClient):
     """Setup time signature and tempo tools."""
     
-    @mcp.tool()
+    @mcp.tool(annotations=NON_DESTRUCTIVE)
     async def set_time_signature(numerator: int = 4, denominator: int = 4):
         """Set the time signature at the cursor.
 
@@ -19,7 +20,7 @@ def setup_time_tempo_tools(mcp, client: MuseScoreClient):
             "denominator": denominator
         })
 
-    @mcp.tool()
+    @mcp.tool(annotations=NON_DESTRUCTIVE)
     async def set_tempo(bpm: int = 120):
         """Add a tempo marking (quarter-note BPM) at the cursor position."""
         return await client.send_command("setTempo", {"bpm": bpm})

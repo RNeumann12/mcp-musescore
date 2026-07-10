@@ -86,6 +86,11 @@
             case "processSequence":      return processSequence(command.params);
             case "syncStateToSelection": return syncStateToSelection();
 
+            // Fretting / playability
+            case "dumpFingering":        return dumpFingering(command.params);
+            case "setNoteString":        return setNoteString(command.params);
+            case "moveNoteString":       return moveNoteString(command.params);
+
             // Navigation
             case "getCursorInfo":        return getCursorInfo(command.params);
             case "goToMeasure":          return goToMeasure(command.params);
@@ -108,6 +113,7 @@
             case "addStaffText":         return addStaffText(command.params);
             case "addRehearsalMark":     return addRehearsalMark(command.params);
             case "addChordSymbol":       return addChordSymbol(command.params);
+            case "addSlide":             return addSlide(command.params);
 
             // Measures
             case "appendMeasure":        return appendMeasure(command.params);
@@ -150,6 +156,15 @@
             return result;
         } catch (e) {
             curScore.endCmd(true);
+            return { error: e.toString() };
+        }
+    }
+
+    function executeReadOnly(operation) {
+        if (!curScore) return { error: "No score open" };
+        try {
+            return operation();
+        } catch (e) {
             return { error: e.toString() };
         }
     }
@@ -651,7 +666,9 @@
         }
         return executeWithUndo(function() {
             syncStateToSelection();
-            var cursor = inputCursorAt(selectionState.startTick, selectionState.startStaff || 0);
+            var insertedTick = selectionState.startTick;
+            var insertedStaff = selectionState.startStaff || 0;
+            var cursor = inputCursorAt(insertedTick, insertedStaff);
             cursor.setDuration(params.duration.numerator, params.duration.denominator);
             var pitchStr = params.pitch.toString();
             var pitchArr = [];
@@ -667,21 +684,35 @@
             for (var i = 1; i < pitchArr.length; i++) {
                 cursor.addNote(pitchArr[i], true);
             }
-            cursor.rewindToTick(selectionState.startTick);
-            if (params.advanceCursorAfterAction) cursor.next();
 
             var element = processElement(cursor.element);
-            var startTick = cursor.tick;
-            var staffIdx = cursor.staffIdx;
-
-            curScore.selection.clear();
-            curScore.selection.selectRange(startTick, startTick + element.durationTicks, staffIdx, staffIdx + 1);
-
-            selectionState = {
-                startStaff: staffIdx, endStaff: staffIdx + 1, startTick: startTick,
+            if (!element) return { error: "Could not read inserted note" };
+            element.startTick = insertedTick;
+            var insertedSelection = {
+                startStaff: insertedStaff, endStaff: insertedStaff + 1, startTick: insertedTick,
                 elements: [element], totalDuration: element.durationTicks
             };
-            return { success: true, message: "Note added with pitch " + params.pitch, currentSelection: selectionState };
+
+            var nextTick = insertedTick;
+            var nextStaff = insertedStaff;
+            if (params.advanceCursorAfterAction) {
+                cursor.rewindToTick(insertedTick);
+                if (cursor.next()) {
+                    nextTick = cursor.tick;
+                    nextStaff = cursor.staffIdx;
+                } else {
+                    nextTick = insertedTick + element.durationTicks;
+                }
+            }
+
+            curScore.selection.clear();
+            curScore.selection.selectRange(nextTick, nextTick + element.durationTicks, nextStaff, nextStaff + 1);
+
+            selectionState = params.advanceCursorAfterAction ? {
+                startStaff: nextStaff, endStaff: nextStaff + 1, startTick: nextTick,
+                elements: [], totalDuration: element.durationTicks
+            } : insertedSelection;
+            return { success: true, message: "Note added with pitch " + params.pitch, currentSelection: insertedSelection };
         });
     }
 
@@ -694,24 +725,40 @@
 
         return executeWithUndo(function() {
             syncStateToSelection();
-            var cursor = inputCursorAt(selectionState.startTick, selectionState.startStaff || 0);
+            var insertedTick = selectionState.startTick;
+            var insertedStaff = selectionState.startStaff || 0;
+            var cursor = inputCursorAt(insertedTick, insertedStaff);
             cursor.setDuration(params.duration.numerator, params.duration.denominator);
             cursor.addRest();
-            cursor.rewindToTick(selectionState.startTick);
-            if (params.advanceCursorAfterAction) cursor.next();
 
             var element = processElement(cursor.element);
-            var startTick = cursor.tick;
-            var staffIdx = cursor.staffIdx;
-
-            curScore.selection.clear();
-            curScore.selection.selectRange(startTick, startTick + element.durationTicks, staffIdx, staffIdx + 1);
-
-            selectionState = {
-                startStaff: staffIdx, endStaff: staffIdx + 1, startTick: startTick,
+            if (!element) return { error: "Could not read inserted rest" };
+            element.startTick = insertedTick;
+            var insertedSelection = {
+                startStaff: insertedStaff, endStaff: insertedStaff + 1, startTick: insertedTick,
                 elements: [element], totalDuration: element.durationTicks
             };
-            return { success: true, message: "Rest added", currentSelection: selectionState };
+
+            var nextTick = insertedTick;
+            var nextStaff = insertedStaff;
+            if (params.advanceCursorAfterAction) {
+                cursor.rewindToTick(insertedTick);
+                if (cursor.next()) {
+                    nextTick = cursor.tick;
+                    nextStaff = cursor.staffIdx;
+                } else {
+                    nextTick = insertedTick + element.durationTicks;
+                }
+            }
+
+            curScore.selection.clear();
+            curScore.selection.selectRange(nextTick, nextTick + element.durationTicks, nextStaff, nextStaff + 1);
+
+            selectionState = params.advanceCursorAfterAction ? {
+                startStaff: nextStaff, endStaff: nextStaff + 1, startTick: nextTick,
+                elements: [], totalDuration: element.durationTicks
+            } : insertedSelection;
+            return { success: true, message: "Rest added", currentSelection: insertedSelection };
         });
     }
 
@@ -732,20 +779,39 @@
             var duration = fraction(params.duration.numerator, params.duration.denominator);
             cursor.addTuplet(ratio, duration);
             cursor.next();
-            if (params.advanceCursorAfterAction) cursor.next();
 
             var element = processElement(cursor.element);
-            var startTick = cursor.tick;
-            var staffIdx = cursor.staffIdx;
-
-            selectionState = {
-                startStaff: staffIdx, endStaff: staffIdx + 1, startTick: startTick,
+            if (!element) return { error: "Could not read inserted tuplet" };
+            var insertedTick = cursor.tick;
+            var insertedStaff = cursor.staffIdx;
+            element.startTick = insertedTick;
+            var insertedSelection = {
+                startStaff: insertedStaff, endStaff: insertedStaff + 1, startTick: insertedTick,
                 elements: [element], totalDuration: element.durationTicks
             };
+
+            var nextTick = insertedTick;
+            var nextStaff = insertedStaff;
+            if (params.advanceCursorAfterAction) {
+                if (cursor.next()) {
+                    nextTick = cursor.tick;
+                    nextStaff = cursor.staffIdx;
+                } else {
+                    nextTick = insertedTick + element.durationTicks;
+                }
+            }
+
+            curScore.selection.clear();
+            curScore.selection.selectRange(nextTick, nextTick + element.durationTicks, nextStaff, nextStaff + 1);
+
+            selectionState = params.advanceCursorAfterAction ? {
+                startStaff: nextStaff, endStaff: nextStaff + 1, startTick: nextTick,
+                elements: [], totalDuration: element.durationTicks
+            } : insertedSelection;
             return {
                 success: true,
                 message: "Tuplet " + params.ratio.numerator + ":" + params.ratio.denominator + " added",
-                currentSelection: selectionState
+                currentSelection: insertedSelection
             };
         });
     }
@@ -895,6 +961,63 @@
         }
     }
 
+    // A slide/glissando is a SPANNER attached to a note (not a segment
+    // annotation): it runs from the note it is added to, to the *next* note in
+    // the same voice/staff. The straight type is what guitar tab renders as a
+    // slanted slide line (and plays as a pitch slide); "wavy" is the classic
+    // glissando squiggle.
+    //
+    // Position resolution mirrors the text markers: measure (1-based) -> tick ->
+    // current selection. A chord at the start position is disambiguated by
+    // `pitch` (otherwise the lone/top note is used). There MUST be a following
+    // note in the same voice for the slide to land on.
+    function addSlide(params) {
+        if (!curScore) return { error: "No score open" };
+        params = params || {};
+        var staff = (params.staff !== undefined) ? params.staff : 0;
+        var voice = params.voice || 0;
+
+        // Resolve the start tick.
+        var tick;
+        if (params.tick !== undefined) {
+            tick = params.tick;
+        } else if (params.measure !== undefined) {
+            var mc = createCursor({ measure: params.measure - 1, startStaff: staff });
+            tick = mc.tick;
+        } else {
+            syncStateToSelection();
+            tick = selectionState.startTick;
+            if (params.staff === undefined) staff = selectionState.startStaff || 0;
+        }
+
+        return executeWithUndo(function() {
+            var found = noteAt(staff, voice, tick, params.pitch);
+            if (found.error) return found;
+            var note = found.note;
+
+            var gliss = newElement(Element.GLISSANDO);
+            // GlissandoType: STRAIGHT = 0 (slide), WAVY = 1. Tolerate API
+            // variance — the element defaults to straight if the setter is
+            // unavailable.
+            var wavy = (params.type && String(params.type).toLowerCase() === "wavy");
+            try { gliss.glissandoType = wavy ? 1 : 0; } catch (eType) {}
+            // Guitar slides carry no "gliss." label; only show text if asked.
+            try {
+                if (params.text) { gliss.showText = true; gliss.text = params.text; }
+                else { gliss.showText = false; }
+            } catch (eText) {}
+
+            note.add(gliss);
+
+            return {
+                success: true,
+                message: "Slide added at tick " + tick + " staff " + staff +
+                         " (pitch " + note.pitch + ")",
+                currentSelection: selectionState
+            };
+        });
+    }
+
     // ========================================================================
     // MEASURE OPERATIONS
     // ========================================================================
@@ -1007,7 +1130,7 @@
     function getScoreSummary(params) {
         if (!curScore) return { error: "No score open" };
 
-        return executeWithUndo(function() {
+        return executeReadOnly(function() {
             var tempState = selectionState;
             var score = {
                 title: curScore.metaTag("workTitle") || curScore.title || "",
@@ -1218,6 +1341,191 @@
         return fret;
     }
 
+    // ========================================================================
+    // FRETTING / PLAYABILITY
+    //
+    // The LilyPond view shows pitch only; a note's *fingering* (which string and
+    // therefore which fret it is played at) is invisible there. On a fretted
+    // instrument a pitch can sit on several strings, and a bad choice forces high
+    // frets / position jumps that are awkward to play. These three actions expose
+    // and edit that assignment without changing pitch:
+    //   * dumpFingering  - read string/fret per note + the staff's open-string
+    //                      tuning and any capo (so a caller can plan moves).
+    //   * setNoteString  - move one note to an absolute string, recomputing the
+    //                      fret from the tuning so the pitch is preserved.
+    //   * moveNoteString - relative move via MuseScore's own string-above/below
+    //                      commands (fallback if direct property writes are
+    //                      read-only on a given build).
+    // ========================================================================
+
+    // Open-string MIDI pitches for a staff, indexed by MuseScore string index
+    // (0 = top TAB line). Defensive about the StringData shape, which varies.
+    function staffTuning(staffIdx) {
+        var instr = resolveInstrument(staffPart(staffAt(staffIdx)));
+        var tuning = [];
+        try {
+            var sd = instr && instr.stringData;
+            if (sd && sd.strings) {
+                for (var s = 0; s < sd.strings.length; s++) {
+                    var entry = sd.strings[s];
+                    var p = null;
+                    try { p = (typeof entry === "number") ? entry : entry.pitch; } catch (e) {}
+                    tuning.push(p);
+                }
+            }
+        } catch (e2) {}
+        return tuning;
+    }
+
+    // Map measure index from a tick using cached boundaries.
+    function measureBoundaries() {
+        var boundaries = [];
+        var bcur = curScore.newCursor();
+        bcur.rewind(0);
+        for (var m = 0; m < curScore.nmeasures; m++) { boundaries.push(bcur.tick); bcur.nextMeasure(); }
+        return boundaries;
+    }
+
+    function dumpFingering(params) {
+        if (!curScore) return { error: "No score open" };
+        params = params || {};
+        var staffIdx = params.staff || 0;
+        var lo = params.startMeasure ? params.startMeasure - 1 : 0;
+        var hi = params.endMeasure ? params.endMeasure : curScore.nmeasures;
+
+        var tuning = staffTuning(staffIdx);
+        var caps = capoEvents(staffIdx);
+        var boundaries = measureBoundaries();
+        function measureOf(tick) {
+            var mi = 0;
+            for (var b = 0; b < boundaries.length; b++) { if (boundaries[b] <= tick) mi = b; else break; }
+            return mi;
+        }
+
+        var notes = [];
+        var cur = curScore.newCursor();
+        cur.staffIdx = staffIdx;
+        cur.rewind(0);
+        var seg = cur.segment;
+        while (seg) {
+            var mi2 = measureOf(seg.tick);
+            if (mi2 >= lo && mi2 < hi) {
+                for (var v = 0; v < 4; v++) {
+                    var el = seg.elementAt(staffIdx * 4 + v);
+                    if (el && el.name === "Chord" && el.notes) {
+                        var keys = Object.keys(el.notes);
+                        for (var n = 0; n < keys.length; n++) {
+                            var note = el.notes[keys[n]];
+                            var st, fr;
+                            try { st = note.string; } catch (eS) { st = null; }
+                            try { fr = note.fret; } catch (eF) { fr = null; }
+                            notes.push({
+                                measure: mi2 + 1, tick: seg.tick, voice: v,
+                                pitch: note.pitch, name: getTpcName(note.tpc),
+                                string: st, fret: fr
+                            });
+                        }
+                    }
+                }
+            }
+            seg = seg.next;
+        }
+        return { success: true, staff: staffIdx, tuning: tuning, capos: caps, notes: notes };
+    }
+
+    // Locate a single note at (tick, staff, voice); disambiguate a chord by pitch.
+    function noteAt(staffIdx, voice, tick, pitch) {
+        var c = curScore.newCursor();
+        c.staffIdx = staffIdx; c.voice = voice || 0; c.rewind(0);
+        try { c.rewindToTick(tick); } catch (e) { while (c.tick < tick && c.next()) {} }
+        var el = c.element;
+        if (!el || el.name !== "Chord") {
+            return { error: "No chord at tick " + tick + " staff " + staffIdx + " voice " + (voice || 0) };
+        }
+        var keys = Object.keys(el.notes);
+        if (pitch !== undefined && pitch !== null) {
+            for (var i = 0; i < keys.length; i++) {
+                if (el.notes[keys[i]].pitch === pitch) return { note: el.notes[keys[i]], chord: el };
+            }
+            return { error: "No note of pitch " + pitch + " in chord at tick " + tick };
+        }
+        if (keys.length === 1) return { note: el.notes[keys[0]], chord: el };
+        return { error: "Chord at tick " + tick + " has " + keys.length + " notes; pass pitch" };
+    }
+
+    function setNoteString(params) {
+        var v = validateParams(params, ["tick", "staff", "string"]);
+        if (!v.valid) return v;
+        return executeWithUndo(function() {
+            var found = noteAt(params.staff, params.voice || 0, params.tick, params.pitch);
+            if (found.error) return found;
+            var note = found.note;
+            var oldString = note.string, oldFret = note.fret, oldPitch = note.pitch;
+
+            var fret = params.fret;
+            if (fret === undefined || fret === null) {
+                // Self-calibrate from this note's *current* string/fret so we
+                // depend on neither the StringData array's order/octave nor the
+                // instrument transposition. The array is reverse-ordered relative
+                // to note.string (index 0 = top TAB line); openSounding(s) =
+                // raw[N-1-s] - offset, where offset is fixed by the known current
+                // string: raw[N-1-oldString] - (oldPitch - oldFret).
+                var tuning = staffTuning(params.staff);
+                var N = tuning.length;
+                if (!N || oldString === undefined || oldString === null) {
+                    return { error: "No tuning to compute fret; pass fret explicitly" };
+                }
+                var curOpenObserved = oldPitch - oldFret;
+                var rawCur = tuning[N - 1 - oldString];
+                var rawTgt = tuning[N - 1 - params.string];
+                if (rawCur === undefined || rawCur === null ||
+                    rawTgt === undefined || rawTgt === null) {
+                    return { error: "No tuning for string " + params.string + "; pass fret explicitly" };
+                }
+                var offset = rawCur - curOpenObserved;
+                var open = rawTgt - offset;
+                var capo = activeCapo(capoEvents(params.staff), params.tick);
+                fret = oldPitch - open - capo;
+            }
+            if (fret < 0) {
+                return { error: "String " + params.string + " yields negative fret " + fret +
+                                " for pitch " + oldPitch + " (note too low for that string)" };
+            }
+            note.string = params.string;
+            note.fret = fret;
+            return {
+                success: true, tick: params.tick, pitch: oldPitch,
+                from: { string: oldString, fret: oldFret },
+                to: { string: note.string, fret: note.fret },
+                pitchPreserved: (note.pitch === oldPitch)
+            };
+        });
+    }
+
+    // Relative move using MuseScore's own commands. Positive `moves` = toward the
+    // top TAB line (string-above); negative = string-below. Runs outside
+    // startCmd/endCmd because cmd() manages its own undo transaction.
+    function moveNoteString(params) {
+        var v = validateParams(params, ["tick", "staff", "moves"]);
+        if (!v.valid) return v;
+        var found = noteAt(params.staff, params.voice || 0, params.tick, params.pitch);
+        if (found.error) return found;
+        var note = found.note;
+        var before = { string: note.string, fret: note.fret, pitch: note.pitch };
+        try {
+            curScore.selection.clear();
+            curScore.selection.select(note, false);
+        } catch (eSel) {
+            return { error: "Could not select note: " + eSel.toString() };
+        }
+        var action = params.moves > 0 ? "string-above" : "string-below";
+        var n = Math.abs(params.moves);
+        for (var i = 0; i < n; i++) { cmd(action); }
+        var re = noteAt(params.staff, params.voice || 0, params.tick, params.pitch);
+        var after = re.note ? { string: re.note.string, fret: re.note.fret, pitch: re.note.pitch } : null;
+        return { success: true, action: action, count: n, from: before, to: after };
+    }
+
     // Human-facing staff descriptor used by getScore (name/visible kept for
     // backwards compatibility; instrument/strings/capo are the new fields).
     function describeStaff(staff, idx) {
@@ -1260,7 +1568,7 @@
 
     function diagnose(params) {
         if (!curScore) return { error: "No score open" };
-        return executeWithUndo(function() {
+        return executeReadOnly(function() {
             var lo = (params && params.startMeasure) ? params.startMeasure - 1 : 0;
             var hi = (params && params.endMeasure) ? params.endMeasure : curScore.nmeasures;
 

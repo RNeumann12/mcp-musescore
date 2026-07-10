@@ -7,6 +7,7 @@ from .staff_instruments import setup_staff_instruments_tools
 from .time_tempo import setup_time_tempo_tools
 from .text import setup_text_tools
 from .sequences import setup_sequence_tools
+from .fretting import setup_fretting_tools
 
 __all__ = [
     "setup_connection_tools",
@@ -15,5 +16,6 @@ __all__ = [
     "setup_staff_instruments_tools",
     "setup_time_tempo_tools",
     "setup_text_tools",
-    "setup_sequence_tools"
+    "setup_sequence_tools",
+    "setup_fretting_tools",
 ]

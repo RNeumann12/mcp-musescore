@@ -1,6 +1,7 @@
 """Cursor and navigation tools for MuseScore MCP."""
 
 from ..client import MuseScoreClient
+from .annotations import NON_DESTRUCTIVE
 
 
 def _position_label(sel: dict, score_info: dict) -> str:
@@ -50,52 +51,52 @@ def setup_navigation_tools(mcp, client: MuseScoreClient):
         from ..utils.lilypond_converter import json_to_lilypond
         return f"{label}\n{json_to_lilypond(sel)}"
 
-    @mcp.tool()
+    @mcp.tool(annotations=NON_DESTRUCTIVE)
     async def get_cursor_info():
         """Get the current cursor position and the selected music as LilyPond."""
         return await _run("getCursorInfo", full=True)
 
-    @mcp.tool()
+    @mcp.tool(annotations=NON_DESTRUCTIVE)
     async def go_to_measure(measure: int):
         """Navigate to a specific measure (1-based)."""
         return await _run("goToMeasure", {"measure": measure}, full=True)
 
-    @mcp.tool()
+    @mcp.tool(annotations=NON_DESTRUCTIVE)
     async def go_to_final_measure():
         """Navigate to the final measure of the score."""
         return await _run("goToFinalMeasure")
 
-    @mcp.tool()
+    @mcp.tool(annotations=NON_DESTRUCTIVE)
     async def go_to_beginning_of_score():
         """Navigate to the beginning of the score."""
         return await _run("goToBeginningOfScore")
 
-    @mcp.tool()
+    @mcp.tool(annotations=NON_DESTRUCTIVE)
     async def next_element():
         """Move the cursor to the next element."""
         return await _run("nextElement")
 
-    @mcp.tool()
+    @mcp.tool(annotations=NON_DESTRUCTIVE)
     async def prev_element():
         """Move the cursor to the previous element."""
         return await _run("prevElement")
 
-    @mcp.tool()
+    @mcp.tool(annotations=NON_DESTRUCTIVE)
     async def next_staff():
         """Move the cursor to the next staff."""
         return await _run("nextStaff")
 
-    @mcp.tool()
+    @mcp.tool(annotations=NON_DESTRUCTIVE)
     async def prev_staff():
         """Move the cursor to the previous staff."""
         return await _run("prevStaff")
 
-    @mcp.tool()
+    @mcp.tool(annotations=NON_DESTRUCTIVE)
     async def select_current_measure():
         """Select the current measure and return it as LilyPond."""
         return await _run("selectCurrentMeasure", full=True)
 
-    @mcp.tool()
+    @mcp.tool(annotations=NON_DESTRUCTIVE)
     async def select_custom_range(start_tick: int, end_tick: int, start_staff: int, end_staff: int):
         """Select a tick range across staves (precise, can span measure bounds); returns it as LilyPond."""
         params = {
