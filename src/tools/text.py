@@ -69,9 +69,13 @@ def setup_text_tools(mcp, client: MuseScoreClient):
     @mcp.tool(annotations=NON_DESTRUCTIVE)
     async def add_chord_symbol(text: str, measure: Optional[int] = None,
                                tick: Optional[int] = None, staff: Optional[int] = None):
-        """Add a chord symbol — a HARMONY annotation MuseScore renders specially
-        (e.g. "Cm7", "G/B", "F#dim", "Bb"). This is the proper element for chord
-        names, not staff text or lyrics.
+        """Add (or replace) a chord symbol — a HARMONY annotation MuseScore renders
+        specially (e.g. "Cm7", "G/B", "F#dim", "Bb"). This is the proper element
+        for chord names, not staff text or lyrics.
+
+        Replace semantics: if a chord symbol already exists at the same beat and
+        staff it is removed first, so re-labelling a bar overwrites cleanly instead
+        of stacking a second symbol. The result reports ``replaced`` (count cleared).
 
         Chord symbols usually sit on beats, so for precise placement pass an
         absolute ``tick`` rather than just a ``measure`` (which targets beat 1).

@@ -169,17 +169,52 @@
         }
     }
 
+    // Tonal pitch classes indexed by MuseScore tpc value (the "line of fifths").
+    // Index == tpc: TPC_NAMES[10] === "Ab", [14] === "C", [22] === "G#".
+    var TPC_NAMES = [
+        "Cbb", "Gbb", "Dbb", "Abb", "Ebb", "Bbb", "Fb",
+        "Cb",  "Gb",  "Db",  "Ab",  "Eb",  "Bb",  "F",
+        "C",   "G",   "D",   "A",   "E",   "B",   "F#",
+        "C#",  "G#",  "D#",  "A#",  "E#",  "B#",  "F##",
+        "C##", "G##", "D##", "A##", "E##", "B##", "F###"
+    ];
+
     function getTpcName(tpc) {
         if (tpc === -1) return "Fbb";
-        var tpcNames = [
-            "Cbb", "Gbb", "Dbb", "Abb", "Ebb", "Bbb", "Fb",
-            "Cb",  "Gb",  "Db",  "Ab",  "Eb",  "Bb",  "F",
-            "C",   "G",   "D",   "A",   "E",   "B",   "F#",
-            "C#",  "G#",  "D#",  "A#",  "E#",  "B#",  "F##",
-            "C##", "G##", "D##", "A##", "E##", "B##", "F###"
-        ];
-        if (tpc >= 0 && tpc < tpcNames.length) return tpcNames[tpc];
+        if (tpc >= 0 && tpc < TPC_NAMES.length) return TPC_NAMES[tpc];
         return "Unknown";
+    }
+
+    // Inverse of getTpcName: a spelling like "Ab" / "F#" / "C" -> its tpc index.
+    function spellToTpc(spell) {
+        for (var i = 0; i < TPC_NAMES.length; i++) {
+            if (TPC_NAMES[i] === spell) return i;
+        }
+        return null;
+    }
+
+    // Parse one pitch token used by addNote. A plain integer ("60") is a raw MIDI
+    // pitch left to MuseScore's default enharmonic spelling (tpc === null). A
+    // scientific note name ("Ab2", "F#3", "Eb4", "Cx5" for double-sharp) yields
+    // BOTH the MIDI pitch and the exact tpc, so the notehead is spelled as written
+    // (Ab instead of the default G#) without changing the sounding pitch.
+    function parseNoteToken(token) {
+        var tok = ("" + token).trim();
+        if (/^-?\d+$/.test(tok)) return { midi: parseInt(tok, 10), tpc: null };
+        var m = tok.match(/^([A-Ga-g])(#+|b+|x)?(-?\d+)$/);
+        if (!m) return { midi: NaN, tpc: null };
+        var letter = m[1].toUpperCase();
+        var acc = m[2] || "";
+        var octave = parseInt(m[3], 10);
+        var basePc = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }[letter];
+        var accVal = 0, spell;
+        if (acc === "x") { accVal = 2; spell = letter + "##"; }
+        else {
+            for (var k = 0; k < acc.length; k++) accVal += (acc.charAt(k) === "#") ? 1 : -1;
+            spell = letter + acc;
+        }
+        var midi = (octave + 1) * 12 + basePc + accVal;   // C4 == 60 == middle C
+        return { midi: midi, tpc: spellToTpc(spell) };
     }
 
     // ========================================================================
@@ -227,10 +262,16 @@
     function inputCursorAt(startTick, staffIdx) {
         var cursor = curScore.newCursor();
         cursor.inputStateMode = Cursor.INPUT_STATE_INDEPENDENT;
-        cursor.staffIdx = staffIdx || 0;
         cursor.voice = 0;
         cursor.rewind(0);
+        cursor.staffIdx = staffIdx || 0;
+        cursor.track = (staffIdx || 0) * 4;
         cursor.rewindToTick(startTick);
+        // MuseScore resets staffIdx while rewinding.  Assign it afterwards so
+        // absolute batch edits land on the requested staff.
+        cursor.staffIdx = staffIdx || 0;
+        cursor.track = (staffIdx || 0) * 4;
+        cursor.voice = 0;
         return cursor;
     }
 
@@ -666,23 +707,42 @@
         }
         return executeWithUndo(function() {
             syncStateToSelection();
-            var insertedTick = selectionState.startTick;
-            var insertedStaff = selectionState.startStaff || 0;
+            // Batch callers need stable absolute addressing.  A UI selection can
+            // be normalised back to staff 0 by MuseScore between commands, so
+            // honour explicit tick/staff parameters when they are supplied.
+            var insertedTick = params.tick !== undefined ? params.tick : selectionState.startTick;
+            var insertedStaff = params.staff !== undefined ? params.staff : (selectionState.startStaff || 0);
             var cursor = inputCursorAt(insertedTick, insertedStaff);
             cursor.setDuration(params.duration.numerator, params.duration.denominator);
             var pitchStr = params.pitch.toString();
-            var pitchArr = [];
-            if (pitchStr.indexOf(',') !== -1) {
-                var parts = pitchStr.split(',');
-                for (var j = 0; j < parts.length; j++) {
-                    pitchArr.push(parseInt(parts[j], 10));
-                }
-            } else {
-                pitchArr = [parseInt(pitchStr, 10)];
+            var rawParts = pitchStr.indexOf(',') !== -1 ? pitchStr.split(',') : [pitchStr];
+            var pitchArr = [];   // MIDI pitches, in input order
+            var tpcArr = [];     // explicit tpc per entry, or null for MIDI default
+            for (var j = 0; j < rawParts.length; j++) {
+                var parsed = parseNoteToken(rawParts[j]);
+                pitchArr.push(parsed.midi);
+                tpcArr.push(parsed.tpc);
             }
             cursor.addNote(pitchArr[0], false);
             for (var i = 1; i < pitchArr.length; i++) {
                 cursor.addNote(pitchArr[i], true);
+            }
+
+            // Honour any explicit enharmonic spelling requested via note names.
+            // Setting tpc respells the notehead (Ab vs G#) without altering the
+            // sounding pitch. Relocate each note by pitch at the inserted segment
+            // rather than trusting the input cursor's post-add position.
+            var hasSpelling = false;
+            for (var s = 0; s < tpcArr.length; s++) { if (tpcArr[s] !== null) { hasSpelling = true; break; } }
+            if (hasSpelling) {
+                for (var t = 0; t < pitchArr.length; t++) {
+                    if (tpcArr[t] === null) continue;
+                    var hit = noteAt(insertedStaff, 0, insertedTick, pitchArr[t]);
+                    if (hit && hit.note) {
+                        hit.note.tpc1 = tpcArr[t];
+                        hit.note.tpc2 = tpcArr[t];
+                    }
+                }
             }
 
             var element = processElement(cursor.element);
@@ -772,7 +832,9 @@
 
         return executeWithUndo(function() {
             syncStateToSelection();
-            var cursor = inputCursorAt(selectionState.startTick, selectionState.startStaff || 0);
+            var insertedTick = params.tick !== undefined ? params.tick : selectionState.startTick;
+            var insertedStaff = params.staff !== undefined ? params.staff : (selectionState.startStaff || 0);
+            var cursor = inputCursorAt(insertedTick, insertedStaff);
             cursor.setDuration(params.duration.numerator, params.duration.denominator);
 
             var ratio = fraction(params.ratio.numerator, params.ratio.denominator);
@@ -928,6 +990,39 @@
     // setting .text on an un-parented Harmony hard-CRASHES MuseScore 4. The
     // element must be added to the score FIRST, then its text set in a separate
     // command so the parse/layout commits cleanly.
+    // Remove every Harmony (chord symbol) sitting on this segment for the given
+    // staff. Chord symbols cannot otherwise be deleted through the bridge, and a
+    // plain re-add would stack a second symbol on top of the old one. Returns the
+    // number removed. Falls back to select+delete where Score.removeElement is
+    // unavailable.
+    function removeHarmoniesAt(segment, staff) {
+        if (!segment) return 0;
+        var anns = segment.annotations;
+        if (!anns || !anns.length) return 0;
+        var lo = (staff || 0) * 4, hi = lo + 3;
+        var victims = [];
+        for (var i = 0; i < anns.length; i++) {
+            var a = anns[i];
+            if (!a || a.name !== "Harmony") continue;
+            var tr; try { tr = a.track; } catch (eT) { tr = undefined; }
+            if (tr === undefined || tr === null || (tr >= lo && tr <= hi)) victims.push(a);
+        }
+        if (!victims.length) return 0;
+        curScore.startCmd();
+        for (var j = 0; j < victims.length; j++) {
+            try {
+                if (typeof curScore.removeElement === "function") {
+                    curScore.removeElement(victims[j]);
+                } else {
+                    curScore.selection.select(victims[j], false);
+                    cmd("delete");
+                }
+            } catch (eR) { /* leave it rather than abort the replace */ }
+        }
+        curScore.endCmd();
+        return victims.length;
+    }
+
     function addChordSymbol(params) {
         var validation = validateParams(params, ["text"]);
         if (!validation.valid) return validation;
@@ -945,6 +1040,10 @@
             }
             if (!cursor.segment) return { error: "No valid position to attach chord symbol" };
 
+            // Replace semantics: clear any existing chord symbol at this beat/staff
+            // first so re-labelling a bar overwrites instead of stacking.
+            var removed = removeHarmoniesAt(cursor.segment, staff || 0);
+
             var harmony = newElement(Element.HARMONY);
             cursor.add(harmony);                 // add BEFORE setting text (else crash)
             curScore.startCmd();
@@ -953,7 +1052,8 @@
 
             return {
                 success: true,
-                message: "Chord symbol added: \"" + params.text + "\"",
+                message: (removed ? "Chord symbol replaced: \"" : "Chord symbol added: \"") + params.text + "\"",
+                replaced: removed,
                 currentSelection: selectionState
             };
         } catch (e) {

@@ -19,12 +19,17 @@ def setup_notes_measures_tools(mcp, client: MuseScoreClient):
             duration: Duration as {"numerator": int, "denominator": int} (e.g., {"numerator": 1, "denominator": 4} for quarter note)
             advance_cursor_after_action: Whether to move cursor to next position after adding note
         """
+        # Pass note-name strings ("Ab2", "F#3", or comma-separated chords) straight
+        # to the plugin: it resolves both scientific names and raw MIDI, and sets
+        # the correct enharmonic spelling (tpc) so "Ab" stays Ab instead of
+        # collapsing to G#. Pre-converting to MIDI here would discard the spelling.
+        # Validate names first so bad input still gets a clean, early error.
         if isinstance(pitch, str):
             try:
-                if "," in pitch:
-                    pitch = ",".join(str(note_name_to_midi(p.strip())) for p in pitch.split(","))
-                else:
-                    pitch = note_name_to_midi(pitch)
+                for part in pitch.split(","):
+                    part = part.strip()
+                    if part and not part.lstrip("-").isdigit():
+                        note_name_to_midi(part)
             except ValueError as e:
                 return {"error": str(e)}
 
