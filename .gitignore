@@ -216,3 +216,11 @@ score_output.txt
 
 # Claude Code local permission grants (machine-specific)
 .claude/settings.local.json
+
+# Codex local config (machine-specific absolute paths)
+.codex/
+
+# Ad-hoc local scratch/debug scripts
+/_*.py
+/_*.json
+/write_wildfire_drums.py

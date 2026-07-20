@@ -10,7 +10,7 @@ def setup_notes_measures_tools(mcp, client: MuseScoreClient):
     """Setup notes and measures tools."""
 
     @mcp.tool(annotations=NON_DESTRUCTIVE)
-    async def add_note(pitch: Union[int, str] = 64, duration: dict = {"numerator": 1, "denominator": 4}, advance_cursor_after_action: bool = True):
+    async def add_note(pitch: Union[int, str] = 64, duration: dict = {"numerator": 1, "denominator": 4}, advance_cursor_after_action: bool = True, tick: Optional[int] = None, staff: Optional[int] = None):
         """Add a note at the current cursor position with the specified pitch and duration.
 
         Args:
@@ -18,6 +18,13 @@ def setup_notes_measures_tools(mcp, client: MuseScoreClient):
                 scientific note name like "C4", "Eb5", "F#3" (C4 = middle C = 60).
             duration: Duration as {"numerator": int, "denominator": int} (e.g., {"numerator": 1, "denominator": 4} for quarter note)
             advance_cursor_after_action: Whether to move cursor to next position after adding note
+            tick: Absolute tick to write at. Strongly preferred over the cursor.
+            staff: 0-based staff to write to. Strongly preferred over the cursor.
+
+        Pass tick AND staff whenever you know them. Cursor-relative entry is not
+        reliable for staff targeting: selectCustomRange and nextStaff both change
+        only the selection, so the input cursor stays on staff 0 and the note
+        lands there, overwriting whatever it hits (notes and lyrics alike).
         """
         # Pass note-name strings ("Ab2", "F#3", or comma-separated chords) straight
         # to the plugin: it resolves both scientific names and raw MIDI, and sets
@@ -33,11 +40,16 @@ def setup_notes_measures_tools(mcp, client: MuseScoreClient):
             except ValueError as e:
                 return {"error": str(e)}
 
-        return await client.send_command("addNote", {
+        payload = {
             "pitch": pitch,
             "duration": duration,
             "advanceCursorAfterAction": advance_cursor_after_action
-        })
+        }
+        if tick is not None:
+            payload["tick"] = tick
+        if staff is not None:
+            payload["staff"] = staff
+        return await client.send_command("addNote", payload)
 
     @mcp.tool(annotations=NON_DESTRUCTIVE)
     async def add_rest(duration: dict = {"numerator": 1, "denominator": 4}, advance_cursor_after_action: bool = True):

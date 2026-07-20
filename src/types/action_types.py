@@ -1,7 +1,7 @@
 """TypedDict definitions for MuseScore MCP action sequences."""
 
 from typing import Dict, Any, List, Literal, Union
-from typing_extensions import TypedDict
+from typing_extensions import TypedDict, NotRequired
 
 
 class getScoreAction(TypedDict):
@@ -13,6 +13,11 @@ class addNoteParams(TypedDict):
     pitch: Union[int, str]
     duration: Dict[Literal["numerator", "denominator"], int]
     advanceCursorAfterAction: bool
+    # Absolute addressing. mcp-logic.js addNote() already honours these, but they
+    # were not declared here, so validation stripped them and every batched
+    # addNote silently fell back to the UI selection — i.e. staff 0.
+    tick: NotRequired[int]
+    staff: NotRequired[int]
 
 
 class addNoteAction(TypedDict):
